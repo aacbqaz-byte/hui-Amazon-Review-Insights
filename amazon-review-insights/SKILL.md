@@ -58,4 +58,4 @@ When the user asks for Listing, A+ content, or a design brief, first construct a
 
 ## Deliver
 
-Write one UTF-8 `.html` file in the current workspace unless the user specifies another local destination. Use a descriptive filename such as `amazon-review-report-<asin>-<marketplace>-<timestamp>.html`. Return the local file path and a brief factual summary: unique reviews, final sample size, main limitation, and top opportunity. Do not embed credentials, raw MCP payloads, scripts, or unescaped review text in the report.
+Write one UTF-8 `.html` file in the current workspace unless the user specifies another local destination. Use a descriptive filename such as `amazon-review-report-<asin>-<marketplace>-<timestamp>.html`. Return the local file path and a brief factual summary: unique reviews, final sample size, main limitation, and top opportunity. Do not embed credentials, raw MCP payloads, external scripts, or unescaped review text in the report. The fixed dashboard contract permits only its own small inline script for local tab navigation and Chinese/English switching; it must make no network request.
