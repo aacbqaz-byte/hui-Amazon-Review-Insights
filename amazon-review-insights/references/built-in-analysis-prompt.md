@@ -174,3 +174,93 @@ For each voice group inserted at `{{all_voice_groups}}`, use this exact shape. I
   </div>
 </details>
 ```
+
+## V3 override — capped collection and Material 3 report
+
+This section supersedes every earlier sampling, dashboard, navigation, Voice of Customer, Listing/A+, and Design Brief presentation instruction in this file. Keep the existing Step 1–5 analytical content and evidence rules, but render it under this v3 contract.
+
+### Collection and source status
+
+- Analyze every unique collected review; do not apply any percentage sampling rule.
+- The collection cap is 2,000 records. When an end page is reached before the cap, show `Collected total: N reviews`. When a documented response total exists, show `Source-reported total: N`. When 2,000 records are reached before an end page, show `Collected 2,000 reviews; source total unknown`.
+- These labels must identify SellerSprite and must not state or imply an Amazon-wide verified total.
+- A custom user prompt always produces this HTML report. It can refine analytical emphasis but cannot change the report format or data-collection rules.
+
+### Material 3 dashboard
+
+Use a Google Material 3-inspired, evidence-first dashboard: deep blue information hierarchy, white elevated surfaces, pale-blue containers, amber medium-risk labels, red high-risk labels, and green positive-evidence labels. Use system fonts and embedded CSS only. Make the desktop navigation a labelled left rail; below 900px, turn it into a labelled, horizontally scrollable top bar. Do not use external icons, images, fonts, CDNs, fetch calls, iframes, analytics, or other network resources.
+
+Keep these views, in this order: Overview, Intent Maps, Opportunities, Listing & A+, Design Brief, Voice of Customer, Data & Method, Limitations. The Overview must prominently surface the top three or four findings as ranked cards with impact, evidence strength, evidence count, concise conclusion, and next action. Use CSS-only horizontal bars and a CSS `conic-gradient` donut; direct labels and values are mandatory.
+
+Generate Chinese and English display content for every interface label, analytical conclusion, chart label, recommendation, method note, and limitation. Use `data-lang="zh"` and `data-lang="en"` spans. Keep original review text unaltered; display a Chinese or English translation below it according to the active display language. Keep marketplace-targeted Listing/A+ copy in its generated target language, labelled as such, rather than translating it through the UI toggle.
+
+### Complete Voice of Customer
+
+Voice of Customer must contain all collected reviews, not only high-information evidence or representative quotations. Create an escaped in-document JSON data model named `voiceReviews` containing every collected review’s author, title, content, date, star, author labels, verified flag, Vine flag, free flag, experience flag, image/video indicator, evidence classification, intent tags, Chinese translation, and English translation. Safely JSON-escape `<`, `>`, `&`, U+2028, and U+2029.
+
+Render 20 matching reviews per page. Each card displays author, normalized date, star, verified-purchase status, review-type labels, original title/content, active-language translation, evidence classification, and intent tags. Add five labelled star checkboxes as star-rating multi-select filters, a text search field, matching-result count, previous/next controls, page position, and an empty state.
+
+The search is local fuzzy text search over original title/content, author, author labels, intent tags, and both translations. Normalize case, whitespace, punctuation, and diacritics. Match exact normalized substrings first; otherwise permit a token edit distance of one for query tokens of four or more characters. Any changed query or star filter resets the page to one. All filter, search, and page behavior stays entirely offline.
+
+### Decision-ready Listing, A+, and Design Brief
+
+Preserve every Step 4 output, but begin the Listing & A+ view with a decision summary: target buyer, positioning conclusion, three highest-value opportunities, supporting evidence/intent, approved proof points, and claims or phrases to avoid. Then provide directly adaptable title, five bullets, description, A+ module copy, and the evidence rationale beside each suggested module. Clearly label fact, inference, and suggested copy.
+
+Preserve every Step 5 output, but render every A+ module as a visual brief card tied to the buyer intent and evidence strength it addresses. Each card must explicitly state: `What to make`, `Why it matters`, `Who it is for`, `Page goal`, `Key message`, `Suggested headline`, `Suggested body`, `Proof points`, `Visual direction`, `Creative direction`, `Compliance redlines`, and `Success criteria`. Success criteria must be measurable asset-acceptance or message-comprehension conditions, never an unsupported sales or ranking promise.
+
+### Required v3 skeleton and inline controller
+
+Return only a complete UTF-8 HTML document. Replace all `{{...}}` markers with escaped values. Use the following structure; retain its semantic roles and local-only behavior.
+
+```html
+<body class="lang-zh">
+  <div class="app-shell">
+    <aside class="navigation-rail" aria-label="Report navigation">
+      <h1>Amazon Review Insights</h1>
+      <nav role="tablist" aria-label="Report sections">
+        <button type="button" role="tab" aria-selected="true" aria-controls="overview" data-view="overview"><span data-lang="zh">总览</span><span data-lang="en">Overview</span></button>
+        <button type="button" role="tab" aria-selected="false" aria-controls="intent" data-view="intent"><span data-lang="zh">消费者意图</span><span data-lang="en">Intent Maps</span></button>
+        <button type="button" role="tab" aria-selected="false" aria-controls="opportunities" data-view="opportunities"><span data-lang="zh">机会矩阵</span><span data-lang="en">Opportunities</span></button>
+        <button type="button" role="tab" aria-selected="false" aria-controls="listing-a-plus" data-view="listing-a-plus">Listing &amp; A+</button>
+        <button type="button" role="tab" aria-selected="false" aria-controls="design-brief" data-view="design-brief">Design Brief</button>
+        <button type="button" role="tab" aria-selected="false" aria-controls="voice" data-view="voice"><span data-lang="zh">用户原声</span><span data-lang="en">Voice of Customer</span></button>
+        <button type="button" role="tab" aria-selected="false" aria-controls="method" data-view="method"><span data-lang="zh">数据与方法</span><span data-lang="en">Data &amp; Method</span></button>
+        <button type="button" role="tab" aria-selected="false" aria-controls="limitations" data-view="limitations"><span data-lang="zh">限制说明</span><span data-lang="en">Limitations</span></button>
+      </nav>
+      <button id="download-report" type="button"><span data-lang="zh">下载 HTML</span><span data-lang="en">Download HTML</span></button>
+      <div class="language-switch"><button type="button" data-language="zh" aria-pressed="true">中文</button><button type="button" data-language="en" aria-pressed="false">EN</button></div>
+    </aside>
+    <main id="report-main">
+      <section id="overview" role="tabpanel">{{overview_with_ranked_cards_metrics_and_css_charts}}</section>
+      <section id="intent" role="tabpanel" hidden>{{all_step_2_and_step_3_content}}</section>
+      <section id="opportunities" role="tabpanel" hidden>{{all_opportunity_rows}}</section>
+      <section id="listing-a-plus" role="tabpanel" hidden>{{decision_summary_and_all_step_4_content}}</section>
+      <section id="design-brief" role="tabpanel" hidden>{{all_visual_step_5_brief_cards}}</section>
+      <section id="voice" role="tabpanel" hidden>
+        <label for="voice-search"><span data-lang="zh">搜索评论原声</span><span data-lang="en">Search review voice</span></label>
+        <input id="voice-search" type="search" autocomplete="off">
+        <fieldset id="star-filters"><legend><span data-lang="zh">星级筛选</span><span data-lang="en">Star filter</span></legend>{{five_star_checkboxes}}</fieldset>
+        <p id="voice-result-count"></p><div id="voice-list" aria-live="polite"></div>
+        <nav aria-label="Voice pagination"><button id="voice-previous" type="button">Previous</button><span id="voice-page-status"></span><button id="voice-next" type="button">Next</button></nav>
+      </section>
+      <section id="method" role="tabpanel" hidden>{{all_data_and_method_content}}</section>
+      <section id="limitations" role="tabpanel" hidden>{{all_limitations_content}}</section>
+    </main>
+  </div>
+  <script id="voice-review-data" type="application/json">{{voice_reviews_json}}</script>
+  <script>
+    const voiceReviews = JSON.parse(document.getElementById('voice-review-data').textContent);
+    const PAGE_SIZE = 20;
+    let voicePage = 1;
+    const normalized = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+    const oneEdit = (a, b) => { if (Math.abs(a.length - b.length) > 1) return false; let i = 0, j = 0, edits = 0; while (i < a.length && j < b.length) { if (a[i] === b[j]) { i++; j++; } else if (++edits > 1) return false; else if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; } } return true; };
+    const fuzzyMatch = (record, query) => { const needle = normalized(query); if (!needle) return true; const haystack = normalized([record.author, record.title, record.content, record.authorLabels, record.intentTags, record.zh, record.en].join(' ')); if (haystack.includes(needle)) return true; return needle.split(' ').every((token) => token.length >= 4 && haystack.split(' ').some((word) => oneEdit(token, word))); };
+    const renderVoice = () => { const activeStars = [...document.querySelectorAll('[data-star-filter]:checked')].map((input) => Number(input.value)); const query = document.getElementById('voice-search').value; const matched = voiceReviews.filter((review) => activeStars.includes(Number(review.star)) && fuzzyMatch(review, query)); const pageCount = Math.max(1, Math.ceil(matched.length / PAGE_SIZE)); voicePage = Math.min(voicePage, pageCount); const rows = matched.slice((voicePage - 1) * PAGE_SIZE, voicePage * PAGE_SIZE); document.getElementById('voice-list').innerHTML = rows.map((review) => `<article class="voice-card"><p>${review.author} · ${review.star}★ · ${review.date} · ${review.verifiedLabel}</p><h3>${review.title}</h3><p>${review.content}</p><p class="translation" data-zh="${review.zh}" data-en="${review.en}"></p></article>`).join('') || '<p>No matching reviews.</p>'; document.getElementById('voice-result-count').textContent = `${matched.length} matching reviews`; document.getElementById('voice-page-status').textContent = `${voicePage} / ${pageCount}`; };
+    document.getElementById('voice-search').addEventListener('input', () => { voicePage = 1; renderVoice(); }); document.querySelectorAll('[data-star-filter]').forEach((input) => input.addEventListener('change', () => { voicePage = 1; renderVoice(); })); document.getElementById('voice-previous').addEventListener('click', () => { voicePage = Math.max(1, voicePage - 1); renderVoice(); }); document.getElementById('voice-next').addEventListener('click', () => { voicePage++; renderVoice(); });
+    document.getElementById('download-report').addEventListener('click', () => { const blob = new Blob(['<!doctype html>\n' + document.documentElement.outerHTML], { type: 'text/html;charset=utf-8' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = 'amazon-review-report-{{asin}}-{{marketplace}}-{{timestamp}}.html'; link.click(); URL.revokeObjectURL(url); });
+    renderVoice();
+  </script>
+</body>
+```
+
+The controller must also switch language, update all `aria-selected` values during navigation, update visible translation text after language changes, use visible focus rings, respect reduced motion, and expand all content for print. The Download HTML control serializes the complete document as a UTF-8 Blob. Do not insert unescaped review content with `innerHTML`; render escaped text nodes or escape every dynamic field first.
