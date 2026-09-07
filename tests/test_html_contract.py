@@ -64,6 +64,25 @@ class HtmlContractTests(unittest.TestCase):
         missing = [fragment for fragment in required_fragments if fragment not in contract]
         self.assertEqual(missing, [], f"Missing v3 dashboard requirements: {missing}")
 
+    def test_v4_dashboard_contract_has_a_single_coherent_visual_system(self):
+        """Catch a regression to the conflicting, card-stacked V3 layout."""
+        contract = REFERENCE.read_text(encoding="utf-8")
+
+        required_fragments = (
+            "V4 report design system",
+            "three deliberate layers: canvas, containers, and content surfaces",
+            "one primary data color",
+            "Do not use risk colors to encode ordinary data series",
+            "Avoid card-inside-card layouts",
+            "Skip to report content",
+            "left rail, centred report canvas, and report header",
+            "replaces every earlier HTML layout and styling instruction",
+        )
+
+        missing = [fragment for fragment in required_fragments if fragment not in contract]
+        self.assertEqual(missing, [], f"Missing V4 visual-system requirements: {missing}")
+        self.assertNotIn("V3 override — capped collection and Material 3 report", contract)
+
 
 if __name__ == "__main__":
     unittest.main()
