@@ -1,0 +1,15 @@
+# Generated reports and review data
+amazon-review-report-*.html
+*.jsonl
+
+# Local Python artifacts
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editor and operating-system files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
