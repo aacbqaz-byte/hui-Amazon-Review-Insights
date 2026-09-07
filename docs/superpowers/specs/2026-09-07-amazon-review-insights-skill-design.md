@@ -2,7 +2,7 @@
 
 ## Goal
 
-Create a discoverable Codex/Claude-compatible skill that turns an Amazon review-analysis request into a reproducible, self-contained HTML report. It uses the already configured `sellersprite-mcp`; it does not install, configure, or bypass that MCP.
+Create a portable Agent Skill that turns an Amazon review-analysis request into a reproducible, self-contained HTML report. Its core uses the interoperable `SKILL.md` format, an already configured `sellersprite-mcp`, and local-file output; it does not depend on Codex- or Claude-specific APIs, install MCPs, configure hosts, or bypass the MCP.
 
 The skill supports three outputs:
 
@@ -86,7 +86,9 @@ The report uses semantic HTML, print-friendly CSS, and a CSS-only accordion; it 
 
 ## Files
 
-Create one skill folder named `amazon-review-insights` in the discoverable Codex skills directory. Its `SKILL.md` contains routing, MCP calling, sampling, interaction, and artifact requirements. A `references/built-in-analysis-prompt.md` contains the optimized review-analysis prompt and fixed HTML output contract. No scraper, credentials, or HTTP client is included because the MCP is already responsible for data retrieval.
+Create one portable skill folder named `amazon-review-insights`. Its `SKILL.md` contains routing, MCP calling, sampling, interaction, and artifact requirements. A `references/built-in-analysis-prompt.md` contains the optimized review-analysis prompt and fixed HTML output contract. No scraper, credentials, HTTP client, host-specific metadata, or host-specific API calls are included because the MCP is already responsible for data retrieval.
+
+Any agent host that supports loading `SKILL.md`-based skills can install or import this folder in its own skill/instruction location. It must expose a configured SellerSprite MCP capability equivalent to `review` and permit writing the final HTML file. A host that does not support skills or MCP tool calls cannot execute the workflow automatically; it can still use the built-in analysis prompt manually with user-supplied review data.
 
 ## Validation
 
