@@ -45,7 +45,11 @@ If `starList` or `typeList` was used, place this exact warning in the report hea
 
 Record every artifact the user requests in the current task. Generate each artifact only from the matching cache, including analysis HTML, review-display HTML, and `.xlsx` export. After each artifact is written, verify that its local file exists and has non-zero size. Delete the matching cache only when every artifact requested in the current task has passed that verification. If analysis/export fails, the user pauses, or further outputs remain possible, preserve the cache and report its path.
 
-If the SellerSprite result has `code: "ERROR_VISIT_MAX"`, stop collection immediately and do not request another page. If the cache has at least one unique review, keep the partial cache with the returned code/message and offer analysis of the existing comments, review-display HTML, or `.xlsx` export; label every resulting artifact as partial. If no review exists, do not write an empty cache and state exactly: `当前尚未爬取到任何评论，请确定 MCP 是否有使用次数。`
+- Analysis HTML: use the built-in/custom prompt and all cached unique reviews.
+- review-display HTML: create a standalone offline file with every cached unique review, all available metadata, local fuzzy search, star filters, and 20 reviews per page.
+- Excel `.xlsx`: write one row per cached unique review with documented review fields and a normalized date; include collection metadata in a labelled metadata sheet or block. Use an available local spreadsheet runtime; if none is available, say so before attempting export.
+
+If the result has `code: "ERROR_VISIT_MAX"`, stop immediately and do not request another page. If the cache has at least one unique review, mark it partial with the returned code/message and offer: analyze existing comments, download review-display HTML, or download Excel. If no review exists, do not write an empty cache and state exactly: `当前尚未爬取到任何评论，请确定 MCP 是否有使用次数。`
 
 ## Analyze safely
 

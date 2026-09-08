@@ -12,6 +12,16 @@ ENTRYPOINT = Path(__file__).resolve().parents[1] / "amazon-review-insights" / "S
 
 
 class HtmlContractTests(unittest.TestCase):
+    def test_partial_cache_contract_preserves_reviews_after_visit_limit(self):
+        entrypoint = ENTRYPOINT.read_text(encoding="utf-8")
+        reference = REFERENCE.read_text(encoding="utf-8")
+        self.assertIn('code: "ERROR_VISIT_MAX"', entrypoint)
+        self.assertIn("review-display HTML", entrypoint)
+        self.assertIn(".xlsx", entrypoint)
+        self.assertIn("all cached unique reviews", entrypoint)
+        self.assertIn("ERROR_VISIT_MAX", reference)
+        self.assertIn("partial", reference)
+
     def test_collection_contract_checkpoints_and_reuses_review_cache(self):
         contract = ENTRYPOINT.read_text(encoding="utf-8")
         required_fragments = (
