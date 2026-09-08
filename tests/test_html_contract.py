@@ -75,13 +75,29 @@ class HtmlContractTests(unittest.TestCase):
             "Do not use risk colors to encode ordinary data series",
             "Avoid card-inside-card layouts",
             "Skip to report content",
-            "left rail, centred report canvas, and report header",
+            "left rail, full-width report canvas, and report header",
             "replaces every earlier HTML layout and styling instruction",
         )
 
         missing = [fragment for fragment in required_fragments if fragment not in contract]
         self.assertEqual(missing, [], f"Missing V4 visual-system requirements: {missing}")
         self.assertNotIn("V3 override — capped collection and Material 3 report", contract)
+
+    def test_dashboard_contract_uses_the_available_desktop_width(self):
+        """Catch a fixed report canvas that leaves unused ultrawide space."""
+        contract = REFERENCE.read_text(encoding="utf-8")
+
+        required_fragments = (
+            "full available width outside the navigation rail",
+            "inline-size: 100%",
+            "max-inline-size:none",
+            "repeat(auto-fit, minmax(280px, 1fr))",
+            "Limit long-form paragraphs, not the report canvas",
+        )
+
+        missing = [fragment for fragment in required_fragments if fragment not in contract]
+        self.assertEqual(missing, [], f"Missing fluid-width requirements: {missing}")
+        self.assertNotIn("max-width: 1360px", contract)
 
 
 if __name__ == "__main__":

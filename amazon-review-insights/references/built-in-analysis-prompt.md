@@ -51,7 +51,20 @@ The document is a fully offline, Material 3-inspired report: system fonts, embed
 
 ### Layout and visual hierarchy
 
-Build around a left rail, centred report canvas, and report header. On desktop, use a 248px sticky rail and a fluid content column; the report canvas has `max-width: 1360px` and `margin-inline: auto`, so it never leaves an arbitrary empty area at the right. Below 960px, change the rail into a compact sticky top bar with horizontally scrollable navigation. Below 640px, use one column and 16px page padding.
+Build around a left rail, full-width report canvas, and report header. On desktop, use a 248px sticky rail and a fluid content column. The report canvas must occupy the full available width outside the navigation rail; do not give the dashboard a fixed maximum width or leave a blank right-side region. Below 960px, change the rail into a compact sticky top bar with horizontally scrollable navigation. Below 640px, use one column and 16px page padding.
+
+Use these layout rules as written:
+
+```css
+.report-shell{display:grid;grid-template-columns:248px minmax(0,1fr);min-height:100vh;inline-size: 100%}
+.report-canvas{inline-size: 100%;max-inline-size:none;min-inline-size:0;padding:24px}
+.metric-grid,.priority-grid{display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:16px}
+.chart-grid{display:grid;grid-template-columns:repeat(auto-fit, minmax(360px, 1fr));gap:20px}
+@media(max-width:960px){.report-shell{grid-template-columns:1fr}.report-canvas{padding:20px}}
+@media(max-width:640px){.report-canvas{padding:16px}.chart-grid{grid-template-columns:1fr}}
+```
+
+Allow metric cards, charts, tables, and structured surfaces to expand into the available desktop width. Limit long-form paragraphs, not the report canvas: prose inside a surface may use `max-inline-size:75ch`, while the surface and grid remain fluid.
 
 Use three deliberate layers: canvas, containers, and content surfaces. The canvas is `#F7F9FC`; a section container is `#F1F5FB`; a content surface is white. Use the content surface for one direct child at a time—Avoid card-inside-card layouts. A hero is a section container with one summary surface and a separate action column, not a white card nested in another white card. Keep an 8px spacing rhythm, 20–24px gaps between sections, 16px compact-component padding, and 24px major-surface padding.
 
