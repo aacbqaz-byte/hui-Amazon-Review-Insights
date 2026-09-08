@@ -49,6 +49,8 @@ Record every artifact the user requests in the current task. Generate each artif
 - review-display HTML: create a standalone offline file with every cached unique review, all available metadata, local fuzzy search, star filters, and 20 reviews per page.
 - Excel `.xlsx`: write one row per cached unique review with documented review fields and a normalized date; include collection metadata in a labelled metadata sheet or block. Use an available local spreadsheet runtime; if none is available, say so before attempting export.
 
+Every artifact produced from a partial cache must visibly state that SellerSprite MCP collection stopped because of `ERROR_VISIT_MAX`, include the collected and unique counts, and never describe the dataset as complete or Amazon-wide. This applies to analysis HTML, review-display HTML, and Excel, including export-only requests.
+
 If the result has `code: "ERROR_VISIT_MAX"`, stop immediately and do not request another page. If the cache has at least one unique review, mark it partial with the returned code/message and offer: analyze existing comments, download review-display HTML, or download Excel. If no review exists, do not write an empty cache and state exactly: `当前尚未爬取到任何评论，请确定 MCP 是否有使用次数。`
 
 ## Analyze safely

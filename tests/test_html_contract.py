@@ -19,6 +19,9 @@ class HtmlContractTests(unittest.TestCase):
         self.assertIn("review-display HTML", entrypoint)
         self.assertIn(".xlsx", entrypoint)
         self.assertIn("all cached unique reviews", entrypoint)
+        self.assertIn("Every artifact produced from a partial cache", entrypoint)
+        self.assertIn("collected and unique counts", entrypoint)
+        self.assertIn("never describe the dataset as complete or Amazon-wide", entrypoint)
         self.assertIn("ERROR_VISIT_MAX", reference)
         self.assertIn("partial", reference)
 
