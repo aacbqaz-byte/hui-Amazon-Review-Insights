@@ -12,6 +12,61 @@ ENTRYPOINT = Path(__file__).resolve().parents[1] / "amazon-review-insights" / "S
 
 
 class HtmlContractTests(unittest.TestCase):
+    def test_cache_reuse_requires_a_canonical_key_and_exact_request_identity(self):
+        """A cache for another effective request must never suppress collection."""
+        contract = ENTRYPOINT.read_text(encoding="utf-8")
+
+        required_fragments = (
+            "stars-<sorted-unique-stars-or-all>_types-<sorted-unique-types-or-all>",
+            "normalized filters",
+            "exact equality of cached ASIN, marketplace, and normalized filters",
+        )
+
+        missing = [fragment for fragment in required_fragments if fragment not in contract]
+        self.assertEqual(missing, [], f"Missing cache-identity safeguards: {missing}")
+
+    def test_partial_artifacts_disclose_the_recorded_failure_without_inventing_visit_limit(self):
+        """Direct HTML and Excel exports must preserve any partial-collection cause."""
+        contract = ENTRYPOINT.read_text(encoding="utf-8")
+
+        required_fragments = (
+            "recorded collection failure code and message",
+            "collected and unique counts",
+            "only when the recorded failure code is `ERROR_VISIT_MAX`",
+            "preserve unknown or other failure codes and messages",
+            "analysis HTML, review-display HTML, and Excel",
+        )
+
+        missing = [fragment for fragment in required_fragments if fragment not in contract]
+        self.assertEqual(missing, [], f"Missing partial-artifact disclosure safeguards: {missing}")
+
+    def test_cache_cleanup_waits_for_a_closed_and_verified_requested_output_set(self):
+        """A cache remains available until the user closes a fully verified output set."""
+        contract = ENTRYPOINT.read_text(encoding="utf-8")
+
+        required_fragments = (
+            "requested-output set is open while the user is choosing",
+            "close the requested-output set only when the user confirms no further output is needed",
+            "requested-output set is closed",
+            "every requested artifact exists and has non-zero size",
+            "selection remains open",
+        )
+
+        missing = [fragment for fragment in required_fragments if fragment not in contract]
+        self.assertEqual(missing, [], f"Missing cache-lifecycle safeguards: {missing}")
+
+    def test_excel_export_preserves_existing_evidence_without_new_analysis(self):
+        """Export-only work must not alter cached evidence or perform analysis."""
+        contract = ENTRYPOINT.read_text(encoding="utf-8")
+
+        required_fragments = (
+            "evidence classification and intent/evidence tags when already generated",
+            "must not run new analysis merely to fill those fields",
+        )
+
+        missing = [fragment for fragment in required_fragments if fragment not in contract]
+        self.assertEqual(missing, [], f"Missing Excel evidence-preservation safeguards: {missing}")
+
     def test_partial_cache_contract_preserves_reviews_after_visit_limit(self):
         entrypoint = ENTRYPOINT.read_text(encoding="utf-8")
         reference = REFERENCE.read_text(encoding="utf-8")
@@ -20,9 +75,11 @@ class HtmlContractTests(unittest.TestCase):
         self.assertIn(".xlsx", entrypoint)
         self.assertIn("all cached unique reviews", entrypoint)
         self.assertIn("Every artifact produced from a partial cache", entrypoint)
+        self.assertIn("recorded collection failure code and message", entrypoint)
         self.assertIn("collected and unique counts", entrypoint)
         self.assertIn("never describe the dataset as complete or Amazon-wide", entrypoint)
         self.assertIn("ERROR_VISIT_MAX", reference)
+        self.assertIn("recorded collection failure code and message", reference)
         self.assertIn("partial", reference)
 
     def test_collection_contract_checkpoints_and_reuses_review_cache(self):
