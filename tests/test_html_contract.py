@@ -12,6 +12,23 @@ ENTRYPOINT = Path(__file__).resolve().parents[1] / "amazon-review-insights" / "S
 
 
 class HtmlContractTests(unittest.TestCase):
+    def test_collection_contract_checkpoints_and_reuses_review_cache(self):
+        contract = ENTRYPOINT.read_text(encoding="utf-8")
+        required_fragments = (
+            ".amazon-review-insights-cache",
+            "review-cache-<marketplace>-<asin>-<filter-key>.json",
+            "after every successful page",
+            "reuse the matching cache",
+            "never call SellerSprite again",
+            "every artifact requested in the current task",
+            "ERROR_VISIT_MAX",
+            "当前尚未爬取到任何评论，请确定 MCP 是否有使用次数。",
+            "review-display HTML",
+            ".xlsx",
+        )
+        missing = [item for item in required_fragments if item not in contract]
+        self.assertEqual(missing, [], f"Missing review-cache requirements: {missing}")
+
     def test_collection_contract_uses_optional_filters_and_a_two_thousand_review_cap(self):
         contract = ENTRYPOINT.read_text(encoding="utf-8")
 
