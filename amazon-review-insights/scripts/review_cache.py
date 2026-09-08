@@ -384,6 +384,14 @@ def archive_existing(paths: CollectionPaths) -> None:
         shutil.move(str(paths.receipt), str(archive / "receipt.json"))
 
 
+def find_legacy_summary(paths: CollectionPaths) -> Path | None:
+    for candidate in paths.workspace.rglob("review-collection-summary-*.txt"):
+        name = candidate.name.upper()
+        if paths.asin in name and paths.marketplace in name:
+            return candidate.resolve()
+    return None
+
+
 def command_init(args: argparse.Namespace, paths: CollectionPaths) -> dict[str, Any]:
     if args.refresh:
         archive_existing(paths)
@@ -401,6 +409,15 @@ def command_init(args: argparse.Namespace, paths: CollectionPaths) -> dict[str, 
     if paths.manifest.exists():
         manifest, _ = reconcile(paths)
         return public_state(manifest, paths, action="resume_existing")
+    legacy_summary = None if args.refresh else find_legacy_summary(paths)
+    if legacy_summary is not None:
+        raise CacheError(
+            "LEGACY_SUMMARY_ONLY",
+            "发现旧版采集摘要但没有完整评论缓存；为避免重复消耗 MCP 次数，已停止。只有用户明确要求刷新后才能重新抓取。",
+            action="do_not_call_mcp",
+            status="legacy-summary-only",
+            summaryPath=str(legacy_summary),
+        )
     paths.pages.mkdir(parents=True, exist_ok=True)
     manifest = new_manifest(paths)
     atomic_write_json(paths.manifest, manifest)

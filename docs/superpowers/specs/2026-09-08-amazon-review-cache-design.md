@@ -63,7 +63,7 @@ Conversation history, progress narration, and summary `.txt` files are never col
 - A gap or corrupt page blocks collection and requires repair or explicit user direction.
 - A missing/corrupt cache after collection has begun must never trigger an automatic refresh.
 - A matching valid receipt points to an HTML file containing the full embedded review dataset and blocks MCP calls permanently unless the user explicitly requests a refresh.
-- A summary-only `.txt` file is not a valid cache and can never justify the claim that full comments were saved.
+- A matching legacy `review-collection-summary-*.txt` without full cached reviews causes `init` to return `LEGACY_SUMMARY_ONLY` and blocks automatic crawling. The old summary cannot reconstruct comments; only an explicit user refresh may bypass the guard.
 
 ## HTML handoff and cache cleanup
 

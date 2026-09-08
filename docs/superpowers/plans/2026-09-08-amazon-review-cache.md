@@ -14,6 +14,7 @@
 
 - The helper is initialized before the first MCP call and consulted before every subsequent MCP call; an atomic pending authorization prevents the same uncommitted page from being released twice.
 - A saved page, terminal collection, partial/error state, blocked-empty state, or valid receipt can never authorize an automatic MCP retry.
+- A matching legacy summary without full reviews blocks initialization unless the user explicitly requests refresh.
 - Pagination size is immutable at `20`; collection stops at 2,000 raw records.
 - Raw page files preserve every returned review object; aggregate export preserves every unique review and unknown fields.
 - Every file replacement that advances collection state is atomic.

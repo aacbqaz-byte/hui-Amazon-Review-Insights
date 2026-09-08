@@ -120,6 +120,19 @@ class ReviewCacheCliTests(unittest.TestCase):
         self.assertEqual(blocked["pendingPage"], 1)
         self.assertNotIn("request", blocked)
 
+    def test_legacy_summary_without_full_reviews_blocks_automatic_recollection(self):
+        summary = self.workspace / "review-collection-summary-B0DURABLE01-US.txt"
+        summary.write_text("pages=22; total=433; summary only", encoding="utf-8")
+
+        blocked = self.run_cli("init", expected=2)
+        self.assertEqual(blocked["error"], "LEGACY_SUMMARY_ONLY")
+        self.assertEqual(blocked["action"], "do_not_call_mcp")
+        self.assertEqual(Path(blocked["summaryPath"]), summary)
+        self.assertFalse((self.workspace / ".amazon-review-insights-cache" / "collections").exists())
+
+        refreshed = self.run_cli("init", "--refresh")
+        self.assertEqual(refreshed["action"], "initialized")
+
     def test_final_documented_page_completes_without_probe_request(self):
         self.initialize()
         self.run_cli("next-request")
