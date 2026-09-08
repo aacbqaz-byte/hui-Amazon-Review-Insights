@@ -56,6 +56,36 @@ class HtmlContractTests(unittest.TestCase):
         missing = [fragment for fragment in required_fragments if fragment not in contract]
         self.assertEqual(missing, [], f"Missing cache-lifecycle safeguards: {missing}")
 
+    def test_html_delivery_requires_runtime_validation_before_cache_cleanup(self):
+        """A broken report must be repaired locally without spending another MCP call."""
+        contract = ENTRYPOINT.read_text(encoding="utf-8")
+        reference = REFERENCE.read_text(encoding="utf-8")
+
+        required_entrypoint = (
+            "scripts/validate_report.py",
+            "before `finalize-html`",
+            "JavaScript syntax",
+            "preserve the live cache",
+            "never call SellerSprite to repair an HTML",
+        )
+        required_reference = (
+            'id="download-html"',
+            "['<!doctype html>', document.documentElement.outerHTML]",
+            "getAttribute('aria-controls')",
+            "Run `scripts/validate_report.py`",
+        )
+
+        self.assertEqual(
+            [item for item in required_entrypoint if item not in contract],
+            [],
+            "Missing report validation gate in SKILL.md",
+        )
+        self.assertEqual(
+            [item for item in required_reference if item not in reference],
+            [],
+            "Missing safe navigation/download runtime contract",
+        )
+
     def test_excel_export_preserves_existing_evidence_without_new_analysis(self):
         """Export-only work must not alter cached evidence or perform analysis."""
         contract = ENTRYPOINT.read_text(encoding="utf-8")

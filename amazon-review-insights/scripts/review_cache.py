@@ -20,6 +20,8 @@ import sys
 import tempfile
 from typing import Any
 
+from validate_report import ReportValidationError, validate_report
+
 
 SCHEMA_VERSION = 2
 PAGE_SIZE = 20
@@ -634,6 +636,10 @@ def command_finalize_html(args: argparse.Namespace, paths: CollectionPaths) -> d
     if manifest["status"] not in {"complete", "capped", "partial"}:
         raise CacheError("HTML_FINALIZE_BLOCKED", f"Cannot finalize HTML while status is {manifest['status']}")
     html_path = Path(args.html).expanduser().resolve()
+    try:
+        validate_report(html_path)
+    except ReportValidationError as exc:
+        raise CacheError(exc.code, exc.message, **exc.details) from exc
     html_reviews = parse_html_reviews(html_path)
     html_dataset_hash = sha256_text(canonical_json(html_reviews))
     if len(html_reviews) != manifest["uniqueCount"] or html_dataset_hash != manifest["datasetSha256"]:

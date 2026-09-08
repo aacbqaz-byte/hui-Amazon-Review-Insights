@@ -138,3 +138,39 @@ Use this structural outline; replace every `{{...}}` marker with escaped report 
 </div>
 <script type="application/json" id="review-data">{{complete_source_reviews_json}}</script>
 ```
+
+### Fixed navigation and download runtime
+
+Use `id="download-html"` for the download control. Bind navigation through each tab's `aria-controls`; do not build executable JavaScript by interpolating report text, and do not place a raw line break inside a quoted JavaScript string. The runtime must contain behavior equivalent to this syntax-safe pattern:
+
+```js
+const reportTabs = [...document.querySelectorAll('[role="tab"][aria-controls]')];
+const reportPanels = [...document.querySelectorAll('[role="tabpanel"]')];
+
+function activateReportTab(tab) {
+  const targetId = tab.getAttribute('aria-controls');
+  reportTabs.forEach((item) => item.setAttribute('aria-selected', String(item === tab)));
+  reportPanels.forEach((panel) => { panel.hidden = panel.id !== targetId; });
+  history.replaceState(null, '', `#${targetId}`);
+}
+
+reportTabs.forEach((tab) => {
+  tab.addEventListener('click', () => activateReportTab(tab));
+});
+
+document.getElementById('download-html').addEventListener('click', () => {
+  const blob = new Blob(['<!doctype html>', document.documentElement.outerHTML], {
+    type: 'text/html;charset=utf-8'
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = document.title.replace(/[^a-z0-9_-]+/gi, '-') + '.html';
+  anchor.click();
+  URL.revokeObjectURL(url);
+});
+```
+
+The review-display-only HTML uses stable IDs `q`, `star`, `list`, `pager`, and `download-html`, with local bindings for search input, star-filter change, pagination click, and Blob download. It may omit analysis tabs, but it must remain fully interactive and include the complete `review-data` block.
+
+Run `scripts/validate_report.py` against the completed file before finalization or delivery. If JavaScript syntax, navigation/review-browser bindings, download behavior, or `review-data` validation fails, repair the existing local HTML from the exported JSON and validate again. Do not recollect reviews.

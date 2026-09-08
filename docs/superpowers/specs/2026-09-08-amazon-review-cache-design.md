@@ -73,7 +73,7 @@ Every analysis or review-display HTML embeds all deduplicated reviews in an offl
 <script type="application/json" id="review-data">[...]</script>
 ```
 
-Review text must be safely JSON-escaped for HTML. `finalize-html` verifies that the file exists and is non-empty, parses the embedded JSON, and compares its review count and dataset hash with the manifest. Only after the match succeeds may it write the durable receipt and delete the collection directory.
+Review text must be safely JSON-escaped for HTML. Before dataset comparison, `finalize-html` calls `scripts/validate_report.py` logic to check executable inline JavaScript syntax with Node.js, analysis-tab or review-browser interaction bindings, the offline download binding, and the embedded JSON. It then compares the review count and dataset hash with the manifest. Only after every check succeeds may it write the durable receipt and delete the collection directory. Any validation failure preserves the complete live cache and must be repaired from the local export without calling SellerSprite again.
 
 The receipt remains in `.amazon-review-insights-cache/receipts/` and records collection identity, HTML path, file hash, dataset hash, review count, source status, and completion time. Later HTML, Excel, or analysis requests recover reviews from that verified HTML/receipt rather than SellerSprite. If the HTML is missing or corrupt, stop and ask the user; never silently crawl again.
 
@@ -99,6 +99,8 @@ Unknown errors use the same stop-first behavior and preserve their exact code/me
 - `record-error --response-file`: persist a stopped/partial state.
 - `export-json --output`: materialize all deduplicated reviews and metadata from the collection or receipt-backed HTML without MCP.
 - `finalize-html --html`: verify the embedded full review dataset, write a receipt, and remove only the matching collection directory.
+
+`amazon-review-insights/scripts/validate_report.py` validates a standalone report independently before delivery. It rejects JavaScript syntax errors, missing or unbound navigation/review-browser controls, external scripts, missing offline download behavior, and invalid/missing `review-data`.
 
 If Python is unavailable, the Skill must stop before the first MCP request. It may not collect reviews without the durable helper.
 

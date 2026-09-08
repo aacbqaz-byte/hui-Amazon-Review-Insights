@@ -27,6 +27,7 @@
    ```
 
 4. 智能体可在本地工作区写入文件，并可运行 Python 3 标准库脚本。
+5. 本地安装 Node.js，用于在交付及清理缓存前执行离线 HTML 内联 JavaScript 语法校验。
 
 本 Skill 不保存密钥，不自行安装 MCP，也不直接请求 SellerSprite HTTP API。
 
@@ -40,7 +41,8 @@ amazon-review-insights/
 ├── references/
 │   └── built-in-analysis-prompt.md
 └── scripts/
-    └── review_cache.py
+    ├── review_cache.py
+    └── validate_report.py
 ```
 
 若宿主的 MCP 工具名称与 `review` 不同，请将它映射为同等的 SellerSprite 评论查询能力；参数和返回字段必须与 Skill 的要求兼容。
@@ -70,12 +72,13 @@ amazon-review-report-B0XXXXXXX-US-20260907-120000.html
 
 ## 验证
 
-缓存脚本只使用 Python 标准库，不需要额外依赖。Skill 格式校验器需要 `PyYAML`，可运行：
+缓存与报告校验脚本只使用 Python 标准库；报告校验还会调用本地 Node.js 的 `node --check`。Skill 格式校验器需要 `PyYAML`，可运行：
 
 ```powershell
 python -m pip install PyYAML
 $env:PYTHONUTF8 = '1'
 python 'C:\Users\jjh09\.codex\skills\.system\skill-creator\scripts\quick_validate.py' '.\amazon-review-insights'
+python '.\amazon-review-insights\scripts\validate_report.py' '<生成的 HTML 路径>'
 python -m unittest discover -s tests -v
 ```
 

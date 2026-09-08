@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 
 
@@ -49,6 +50,36 @@ def response(page: int, pages: int, total: int, records: list[dict], size: int =
             "content": records,
         },
     }
+
+
+def interactive_report_html(reviews: list[dict], runtime_suffix: str = "") -> str:
+    payload = json.dumps(reviews, ensure_ascii=False).replace("<", "\\u003c")
+    runtime = """
+    const tabs = document.querySelectorAll('[role="tab"][data-view]');
+    function activateView(view) {
+      tabs.forEach((tab) => tab.setAttribute('aria-selected', String(tab.dataset.view === view)));
+      document.querySelectorAll('[role="tabpanel"]').forEach((panel) => { panel.hidden = panel.id !== view; });
+    }
+    tabs.forEach((tab) => tab.addEventListener('click', () => activateView(tab.dataset.view)));
+    document.getElementById('download-html').addEventListener('click', () => {
+      const blob = new Blob(['<!doctype html>', document.documentElement.outerHTML], {type: 'text/html;charset=utf-8'});
+    });
+    """ + runtime_suffix
+    return textwrap.dedent(
+        f"""
+        <!doctype html><html><body>
+          <nav role="tablist">
+            <button role="tab" data-view="overview" aria-controls="overview" aria-selected="true">Overview</button>
+            <button role="tab" data-view="voice" aria-controls="voice" aria-selected="false">Voice</button>
+          </nav>
+          <section id="overview" role="tabpanel">Overview</section>
+          <section id="voice" role="tabpanel" hidden>Voice</section>
+          <button id="download-html">Download HTML</button>
+          <script>{runtime}</script>
+          <script type="application/json" id="review-data">{payload}</script>
+        </body></html>
+        """
+    ).strip()
 
 
 class ReviewCacheCliTests(unittest.TestCase):
@@ -232,20 +263,13 @@ class ReviewCacheCliTests(unittest.TestCase):
         collection = Path(saved["collectionPath"])
 
         bad_html = self.workspace / "bad.html"
-        bad_html.write_text(
-            '<!doctype html><script type="application/json" id="review-data">[]</script>',
-            encoding="utf-8",
-        )
+        bad_html.write_text(interactive_report_html([]), encoding="utf-8")
         mismatch = self.run_cli("finalize-html", "--html", str(bad_html), expected=2)
         self.assertEqual(mismatch["error"], "HTML_DATASET_MISMATCH")
         self.assertTrue(collection.is_dir())
 
-        encoded = json.dumps(originals, ensure_ascii=False).replace("<", "\\u003c")
         good_html = self.workspace / "good.html"
-        good_html.write_text(
-            f'<!doctype html><script type="application/json" id="review-data">{encoded}</script>',
-            encoding="utf-8",
-        )
+        good_html.write_text(interactive_report_html(originals), encoding="utf-8")
         finalized = self.run_cli("finalize-html", "--html", str(good_html))
         self.assertEqual(finalized["status"], "receipt-backed")
         self.assertFalse(collection.exists())
@@ -257,6 +281,26 @@ class ReviewCacheCliTests(unittest.TestCase):
         recovered = self.run_cli("export-json", "--output", str(recovered_path))
         self.assertEqual(recovered["source"], "verified-html")
         self.assertEqual(json.loads(recovered_path.read_text(encoding="utf-8"))["reviews"], originals)
+
+    def test_invalid_report_javascript_preserves_the_complete_review_cache(self):
+        self.initialize()
+        self.run_cli("next-request")
+        originals = [review(1), review(2)]
+        saved = self.save(response(1, 1, 2, originals))
+        collection = Path(saved["collectionPath"])
+        broken_html = self.workspace / "broken.html"
+        broken_html.write_text(
+            interactive_report_html(
+                originals,
+                runtime_suffix="\nconst downloaded = '<!doctype html>\n' + document.documentElement.outerHTML;",
+            ),
+            encoding="utf-8",
+        )
+
+        rejected = self.run_cli("finalize-html", "--html", str(broken_html), expected=2)
+        self.assertEqual(rejected["error"], "JS_SYNTAX_ERROR")
+        self.assertTrue(collection.is_dir())
+        self.assertFalse((self.workspace / ".amazon-review-insights-cache" / "receipts").exists())
 
 
 if __name__ == "__main__":
