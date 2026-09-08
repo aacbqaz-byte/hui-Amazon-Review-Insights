@@ -108,7 +108,7 @@ Generate Chinese and English UI labels, analytical conclusions, chart labels, re
 
 Analyze every unique collected review; never percentage-sample. The collection cap is 2,000. Display `Source-reported total: N` if a documented SellerSprite total was returned; display `Collected total: N reviews` if collection ended before the cap; otherwise display `Collected 2,000 reviews; source total unknown`. Identify all three as SellerSprite service results, never as Amazon-wide verified totals. A custom user prompt always produces this HTML report.
 
-Voice of Customer contains all collected reviews in an escaped in-document JSON model named `voiceReviews`; safely JSON-escape `<`, `>`, `&`, U+2028, and U+2029. Each record contains author, title, content, date, star, author labels, verified, Vine, free, experience, image/video indicators, evidence classification, intent tags, Chinese translation, and English translation.
+Embed the exact complete review array supplied by `review_cache.py export-json` in `<script type="application/json" id="review-data">[...]</script>`. This block is the durable source copy used to verify the HTML before deleting the live cache: preserve every review object and unknown field without truncation, sampling, translation, or analytical mutation. Safely JSON-escape `<`, `>`, `&`, U+2028, and U+2029. Parse `review-data` locally and derive the UI model `voiceReviews`; derived records may add evidence classification, intent tags, Chinese translation, and English translation, while author, title, content, date, star, author labels, verified, Vine, free, experience, image/video indicators, and other source fields remain unchanged.
 
 Render 20 matching reviews per page in a full-width reading list. Put the search and five labelled star-rating multi-select filters together in one container toolbar, followed by result count, review list, and previous/next pagination. Each review surface shows author, normalized date, star, verified-purchase status, other review-type labels, original title/content, active-language translation, evidence classification, and intent tags. The original text is always visible.
 
@@ -136,4 +136,5 @@ Use this structural outline; replace every `{{...}}` marker with escaped report 
     <section id="limitations" role="tabpanel" hidden>{{limitation_content}}</section>
   </main>
 </div>
+<script type="application/json" id="review-data">{{complete_source_reviews_json}}</script>
 ```

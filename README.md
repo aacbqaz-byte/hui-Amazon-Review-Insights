@@ -1,18 +1,18 @@
 # Amazon Review Insights Skill
 
-一个可移植的 Agent Skill：通过已配置的 SellerSprite MCP 采集 Amazon ASIN 评论，按设定比例抽样，生成带证据链的独立 HTML 洞察报告。
+一个可移植的 Agent Skill：通过已配置的 SellerSprite MCP 采集 Amazon ASIN 评论，完整保存最多 2,000 条记录，并生成带证据链的独立 HTML 洞察报告。
 
 它不绑定 Codex、Claude 或某一家智能体。任何支持 `SKILL.md`、MCP 工具调用和本地文件写入的智能体都可以导入此 Skill。
 
 ## 能力
 
-- 调用 `sellersprite-mcp` 的 `review` 能力，按每页 10 条自动翻页采集评论。
+- 调用 `sellersprite-mcp` 的 `review` 能力，按每页 20 条自动翻页采集评论。
 - 强制要求 `asin` 和 `marketplace`；缺少站点时先询问，不猜测默认站点。
-- 采样规则：不超过 500 条全量分析；501–3,000 条分析 80%；超过 3,000 条分析 60%。
-- 按星级、验证购买状态与时间分层随机抽样，种子由 `marketplace|asin` 稳定生成。
-- 分批处理评论，每 50 条形成批次摘要，再进行二次意图聚类。
+- 最多采集 2,000 条；不足 2,000 条时采集接口可返回的全部评论，不做比例抽样。
+- 每页 MCP 结果立即完整写入本地事务式缓存；上下文压缩或任务中断后只从下一未保存页继续。
+- 完成、部分失败或已有已验证 HTML 时禁止自动重复调用 MCP。
 - 支持内置提示词或用户上传的 `.md` / `.txt` 分析提示词；自定义提示词只能改变分析视角。
-- 输出一个无外部依赖、带嵌入 CSS、可打印的 HTML 报告。
+- 输出无外部依赖的离线 HTML；其中嵌入全部评论，支持导航、中英文切换、模糊搜索、星级筛选和每页 20 条用户原声。
 - 用户提供真实产品事实后，可额外生成 Listing、A+ 内容计划与设计 Brief。
 
 ## 前置条件
@@ -26,7 +26,7 @@
    可选：starList、typeList、page、size
    ```
 
-4. 智能体可在本地工作区写入 `.html` 文件。
+4. 智能体可在本地工作区写入文件，并可运行 Python 3 标准库脚本。
 
 本 Skill 不保存密钥，不自行安装 MCP，也不直接请求 SellerSprite HTTP API。
 
@@ -37,8 +37,10 @@
 ```text
 amazon-review-insights/
 ├── SKILL.md
-└── references/
-    └── built-in-analysis-prompt.md
+├── references/
+│   └── built-in-analysis-prompt.md
+└── scripts/
+    └── review_cache.py
 ```
 
 若宿主的 MCP 工具名称与 `review` 不同，请将它映射为同等的 SellerSprite 评论查询能力；参数和返回字段必须与 Skill 的要求兼容。
@@ -68,12 +70,13 @@ amazon-review-report-B0XXXXXXX-US-20260907-120000.html
 
 ## 验证
 
-安装 Python 依赖后，可运行：
+缓存脚本只使用 Python 标准库，不需要额外依赖。Skill 格式校验器需要 `PyYAML`，可运行：
 
 ```powershell
 python -m pip install PyYAML
 $env:PYTHONUTF8 = '1'
 python 'C:\Users\jjh09\.codex\skills\.system\skill-creator\scripts\quick_validate.py' '.\amazon-review-insights'
+python -m unittest discover -s tests -v
 ```
 
 预期输出：`Skill is valid!`

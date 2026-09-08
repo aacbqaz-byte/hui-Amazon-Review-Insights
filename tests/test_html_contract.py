@@ -19,7 +19,7 @@ class HtmlContractTests(unittest.TestCase):
         required_fragments = (
             "stars-<sorted-unique-stars-or-all>_types-<sorted-unique-types-or-all>",
             "normalized filters",
-            "exact equality of cached ASIN, marketplace, and normalized filters",
+            "Exact equality of ASIN, marketplace, normalized filters, schema, and page size",
         )
 
         missing = [fragment for fragment in required_fragments if fragment not in contract]
@@ -40,16 +40,17 @@ class HtmlContractTests(unittest.TestCase):
         missing = [fragment for fragment in required_fragments if fragment not in contract]
         self.assertEqual(missing, [], f"Missing partial-artifact disclosure safeguards: {missing}")
 
-    def test_cache_cleanup_waits_for_a_closed_and_verified_requested_output_set(self):
-        """A cache remains available until the user closes a fully verified output set."""
+    def test_cache_cleanup_requires_verified_html_and_leaves_a_durable_receipt(self):
+        """Deleting live data must leave a verified offline source for later outputs."""
         contract = ENTRYPOINT.read_text(encoding="utf-8")
 
         required_fragments = (
-            "requested-output set is open while the user is choosing",
-            "close the requested-output set only when the user confirms no further output is needed",
-            "requested-output set is closed",
-            "every requested artifact exists and has non-zero size",
-            "selection remains open",
+            "`finalize-html --html <path>`",
+            "embedded count and SHA-256",
+            "Only a successful verification may delete the live collection directory",
+            "durable receipt",
+            "later HTML, Excel, or analysis requests",
+            "If only Excel is generated, or HTML creation/finalization fails, preserve the live cache",
         )
 
         missing = [fragment for fragment in required_fragments if fragment not in contract]
@@ -85,12 +86,11 @@ class HtmlContractTests(unittest.TestCase):
     def test_collection_contract_checkpoints_and_reuses_review_cache(self):
         contract = ENTRYPOINT.read_text(encoding="utf-8")
         required_fragments = (
-            ".amazon-review-insights-cache",
-            "review-cache-<marketplace>-<asin>-<filter-key>.json",
-            "after every successful page",
-            "reuse the matching cache",
+            ".amazon-review-insights-cache/collections/<identity>/",
+            "lossless `pages/page-XXXXXX.json` files",
+            "deduplicated `reviews.jsonl`",
+            "Generate every artifact from `export-json",
             "never call SellerSprite again",
-            "every artifact requested in the current task",
             "ERROR_VISIT_MAX",
             "当前尚未爬取到任何评论，请确定 MCP 是否有使用次数。",
             "review-display HTML",
@@ -105,7 +105,7 @@ class HtmlContractTests(unittest.TestCase):
         required_fragments = (
             "ask whether the user wants optional review filters",
             "2,000",
-            '"size": 10',
+            '"size": 20',
             "analyze every unique collected review",
             "Source-reported total",
             "Collected 2,000 reviews; source total unknown",
@@ -115,6 +115,29 @@ class HtmlContractTests(unittest.TestCase):
         self.assertEqual(missing, [], f"Missing capped-collection requirements: {missing}")
         self.assertNotIn("ceil(N × 0.80)", contract)
         self.assertNotIn("ceil(N × 0.60)", contract)
+
+    def test_every_mcp_page_is_guarded_by_durable_executable_state(self):
+        """Context compression must not make conversational memory authoritative."""
+        contract = ENTRYPOINT.read_text(encoding="utf-8")
+
+        required_fragments = (
+            "scripts/review_cache.py",
+            "before the first MCP call",
+            "before every MCP call",
+            "`next-request`",
+            "`save-page`",
+            "`pendingRequest`",
+            "`REQUEST_PENDING`",
+            "Immediately after each MCP response",
+            "summary `.txt` files are not collection state",
+            "never request `data.pages + 1`",
+            "receipt-backed",
+            'id="review-data"',
+            "If Python is unavailable",
+        )
+
+        missing = [fragment for fragment in required_fragments if fragment not in contract]
+        self.assertEqual(missing, [], f"Missing executable cache protocol: {missing}")
 
     def test_dashboard_contract_preserves_offline_navigation_and_full_voice_evidence(self):
         contract = REFERENCE.read_text(encoding="utf-8")

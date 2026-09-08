@@ -17,41 +17,61 @@ Activate only for a request to collect, crawl, summarize, or analyze reviews tie
 
 ## Collect reviews
 
-Call the configured SellerSprite `review` capability with these parameters:
+Use the bundled standard-library helper at `scripts/review_cache.py` as the only authority for pagination and saved review data. If Python is unavailable or the helper returns invalid/corrupt state, stop before the first MCP call and tell the user; never fall back to conversational memory or an untracked crawl.
+
+The canonical filter key is `stars-<sorted-unique-stars-or-all>_types-<sorted-unique-types-or-all>`. Pass exactly the same marketplace, ASIN, and normalized filters to every helper command. Before the first MCP call, initialize durable control state in the active workspace:
+
+```text
+python <skill-dir>/scripts/review_cache.py init --workspace <workspace> --marketplace <marketplace> --asin <asin> [--stars <values>] [--types <values>]
+```
+
+If `init` reports `receipt-backed` / `use_verified_html`, do not call SellerSprite: use `export-json` to recover every review from the verified local HTML. If it reports an existing live collection, resume it. A new collection uses this fixed request shape:
 
 ```json
 {
   "marketplace": "<user-provided marketplace>",
   "asin": "<user-provided ASIN>",
   "page": 1,
-  "size": 10
+  "size": 20
 }
 ```
 
-Include `starList` or `typeList` only for an explicit user filter. Start at page 1, increment `page` sequentially, and stop when the returned review list is empty, has fewer than 10 records, or 2,000 records have been collected. If the MCP returns a structurally different response, identify the review list from its documented result; if no list can be identified, report the tool-contract problem rather than guessing.
+Run the helper before every MCP call—including the first call and every call after context compression—using `next-request`. Before returning a request, the helper atomically records that page as `pendingRequest`. A second `next-request` for an uncommitted authorization returns `REQUEST_PENDING` / `do_not_call_mcp` and cannot release the same page again. If its earlier MCP response is still available, save that response; if it is unavailable, stop and tell the user instead of repeating the call. Call SellerSprite `review` only when the first authorization says `action: "call_mcp"`, and use the returned `request` object unchanged. Never invent a page, change `size`, retry an already saved or pending page, or probe the end; never request `data.pages + 1`. Any `do_not_call_mcp` result is a hard stop.
 
-Normalize each returned record without dropping these available fields: `author`, `title`, `content`, `date`, `star`, `authorLabels`, `skus`, `images`, `videos`, `likes`, `image`, `video`, `verified`, `vine`, `free`, and `experience`. Deduplicate with a stable fingerprint of author, timestamp, title, content, and star. Record collected count, duplicate count, unique count, filters, and pages retrieved. If the response supplies a documented total, display `Source-reported total: N`; if an end page arrives before the cap, display `Collected total: N reviews`; if the cap arrives first, display `Collected 2,000 reviews; source total unknown`. All count statements refer only to SellerSprite results, not an Amazon-wide verified total.
+Immediately after each MCP response, before progress narration, analysis, another tool call, or another MCP request:
 
-Report concise progress after every 50 pages. Do not silently switch to a first-page or partial-page sample. Always analyze every unique collected review; do not apply a percentage sampling rule. If collection fails, report the failed page and the number already collected; only analyze a partial dataset if the user explicitly asks to continue, and label it as partial.
+1. Serialize the complete response to a temporary UTF-8 JSON file without editing, summarizing, truncating, or dropping review fields.
+2. For `code: "OK"`, run `save-page` with `--response-file <file>`. For any non-OK code, run `record-error --response-file <file>`.
+3. Confirm the helper succeeded and delete only that temporary response file. The helper has already atomically saved the full reviews.
+4. Run `next-request` again. Continue only if it authorizes exactly one next page.
+
+The helper fixes page size at 20, persists page files before advancing `nextPage`, stops at the documented final page without an extra empty-page probe, and caps collection at 2,000 raw records. It saves every returned review object losslessly, including unknown future fields, and builds a separate deduplicated `reviews.jsonl` using author, timestamp, title, content, and star. A response whose page or size conflicts with durable state blocks collection without advancing it.
+
+Conversation history, progress messages, and collection-summary `.txt` files are not collection state. After context compression or interruption, first run `status`, then `next-request`; the on-disk manifest, pending authorization, and page files are authoritative. Never restart at page 1 merely because earlier MCP output is no longer in context.
+
+Report concise progress only after a page checkpoint succeeds. Record collected count, duplicate count, unique count, filters, and pages retrieved. If the response supplies a documented total, display `Source-reported total: N`; if an end page arrives before the cap, display `Collected total: N reviews`; if the cap arrives first, display `Collected 2,000 reviews; source total unknown`. All count statements refer only to SellerSprite results, not an Amazon-wide verified total. Always analyze every unique collected review; never apply percentage sampling.
 
 If `starList` or `typeList` was used, place this exact warning in the report header, executive summary, and every chart or matrix: **Filtered sample — not representative of all buyers.**
 
-## Temporary local cache
+## Durable local source and outputs
 
-- Define the canonical filter key as `stars-<sorted-unique-stars-or-all>_types-<sorted-unique-types-or-all>`: normalize each selected `starList` and `typeList` to sorted unique values, or use `all` when that filter is absent. Serialize UTF-8 JSON to `.amazon-review-insights-cache/review-cache-<marketplace>-<asin>-<filter-key>.json` after every successful page has been normalized, deduplicated, and merged.
-- Store schema version, creation time, ASIN, marketplace, normalized filters, pages retrieved, raw/duplicate/unique counts, SellerSprite source status, normalized raw records, and unique records. For a partial collection, also store the recorded collection failure code and message.
-- Replace the same JSON checkpoint atomically; never persist credentials or a full MCP envelope.
-- Before any new collection, normalize the current request filters and require exact equality of cached ASIN, marketplace, and normalized filters before reuse; then reuse the matching cache if it exists and tell the user which file is being reused. Do not call SellerSprite again unless the user explicitly requests refresh, changes ASIN/marketplace/filters, or no matching cache exists; otherwise never call SellerSprite again for that output set.
+The helper stores live state under `.amazon-review-insights-cache/collections/<identity>/`: `manifest.json`, lossless `pages/page-XXXXXX.json` files, and deduplicated `reviews.jsonl`. Schema version 2 includes immutable `requestPageSize: 20`; never resume an older or size-10 cache with size 20. Exact equality of ASIN, marketplace, normalized filters, schema, and page size is required.
 
-The requested-output set is open while the user is choosing outputs, and record every artifact requested in the current task. Do not close it prematurely: close the requested-output set only when the user confirms no further output is needed in the current task. Generate each artifact only from the matching cache, including analysis HTML, review-display HTML, and `.xlsx` export. After each artifact is written, verify that its local file exists and has non-zero size. Delete the matching cache only when the requested-output set is closed and every requested artifact exists and has non-zero size. If analysis/export fails, the user pauses, selection remains open, or further outputs remain possible, preserve the cache and report its path.
+Generate every artifact from `export-json --output <local-input.json>`, never from MCP output retained in conversation. This applies to analysis HTML, review-display HTML, and `.xlsx` export. If collection is still `collecting`, finish through guarded `next-request`; if it is `partial`, use it only after the user chooses a partial-data output.
 
 - Analysis HTML: use the built-in/custom prompt and all cached unique reviews.
 - review-display HTML: create a standalone offline file with every cached unique review, all available metadata, local fuzzy search, star filters, and 20 reviews per page.
 - Excel `.xlsx`: write one row per cached unique review with documented review fields and a normalized date; include collection metadata in a labelled metadata sheet or block. Retain evidence classification and intent/evidence tags when already generated; must not run new analysis merely to fill those fields. Use an available local spreadsheet runtime; if none is available, say so before attempting export.
 
+Every analysis or review-display HTML must embed the exact complete exported review array in a safely escaped offline block: `<script type="application/json" id="review-data">[...]</script>`. Escape `<`, `>`, `&`, U+2028, and U+2029 inside JSON. The visible Voice of Customer may add derived translations/tags, but it must not replace, truncate, sample, or modify this source array.
+
+After writing an HTML, run `finalize-html --html <path>`. The helper verifies that the file is non-empty and that the embedded count and SHA-256 match the complete cached unique dataset. Only a successful verification may delete the live collection directory. It leaves a durable receipt under `.amazon-review-insights-cache/receipts/` pointing to the verified HTML. That receipt is `receipt-backed` collection state: later HTML, Excel, or analysis requests use `export-json` to recover reviews from the HTML and never call SellerSprite again. If the HTML is moved, missing, modified, or corrupt, stop and ask the user; never silently recrawl.
+
+If only Excel is generated, or HTML creation/finalization fails, preserve the live cache. A refresh is allowed only after the user explicitly asks for it; use `init --refresh`, which archives the previous generation rather than silently overwriting it.
+
 Every artifact produced from a partial cache must visibly state the recorded collection failure code and message, include the collected and unique counts, and never describe the dataset as complete or Amazon-wide. Name `ERROR_VISIT_MAX` only when the recorded failure code is `ERROR_VISIT_MAX`; preserve unknown or other failure codes and messages rather than inventing a visit-limit cause. This applies to analysis HTML, review-display HTML, and Excel, including export-only requests.
 
-If the result has `code: "ERROR_VISIT_MAX"`, stop immediately and do not request another page. If the cache has at least one unique review, mark it partial with the returned code/message and offer: analyze existing comments, download review-display HTML, or download Excel. If no review exists, do not write an empty cache and state exactly: `当前尚未爬取到任何评论，请确定 MCP 是否有使用次数。`
+If the result has `code: "ERROR_VISIT_MAX"`, `record-error` makes all later `next-request` calls fail. If saved reviews exist, the status is `partial`; offer analysis, review-display HTML, or Excel from those local reviews. If no review exists, it persists only a `blocked-empty` control state—not an empty review dataset—and state exactly: `当前尚未爬取到任何评论，请确定 MCP 是否有使用次数。` Do not call MCP again until the user explicitly confirms a refresh after restoring usage.
 
 ## Analyze safely
 
