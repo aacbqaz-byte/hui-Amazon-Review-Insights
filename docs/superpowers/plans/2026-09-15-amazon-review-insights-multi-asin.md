@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- SellerSprite MCP requests always use `size: 50`.
+- Every newly created SellerSprite collection uses `size: 50`; only a matching pre-existing live size-20 collection resumes at 20 to avoid repeating saved pages.
 - A batch has two through five unique ASINs, one marketplace, and one normalized filter set.
 - The default target is 2,000 reviews per ASIN; a custom target is 50–2,000 and divisible by 50.
 - Never authorize an MCP call from conversation history; durable local state is authoritative.
@@ -200,4 +200,3 @@ Replace only `C:/Users/jjh09/.codex/skills/amazon-review-insights` with the veri
 - [ ] **Step 7: Commit**
 
 Commit: `feat: analyze multiple asins in one voc report`
-

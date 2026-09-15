@@ -9,7 +9,7 @@ Extend Amazon Review Insights from a single-ASIN workflow to one batch of two th
 - Accept one ASIN for backward-compatible single-product work or two through five ASINs for joint analysis.
 - Require one explicit marketplace for the batch. Never infer it.
 - Ask once for optional `starList` and `typeList`; apply the same filters to every ASIN.
-- Ask whether to use the default 2,000-review limit per ASIN. A smaller limit must be 50–2,000 and divisible by 50 because MCP requests always use `size: 50`.
+- Ask whether to use the default 2,000-review limit per ASIN. A smaller limit must be 50–2,000 and divisible by 50 because new MCP collections use `size: 50`; only a matching pre-existing live size-20 collection resumes at 20 to avoid repeating saved pages.
 - After collection, ask whether to analyze or export. Analysis asks for built-in versus attached custom prompt. Custom prompts still produce the complete offline HTML.
 - Listing, A+, and Design Brief are for one target product. They require the target product’s top three features plus material/composition/specifications; compared-ASIN reviews are not target-product facts.
 
@@ -70,4 +70,3 @@ Voice of Customer contains every review and adds an ASIN filter to existing fuzz
 Validate JavaScript, navigation, download, the complete review array, the source index, and every per-ASIN dataset hash. Only after all checks pass may the helper write a batch receipt plus compatible per-ASIN receipts and remove live member caches. Each receipt points to the verified joint HTML and knows how to select its ASIN’s reviews.
 
 If validation fails, preserve every cache and regenerate only from local JSON. If some ASINs are partial because MCP limits are exhausted, show their exact failure codes and let the user choose whether to continue with existing data.
-
