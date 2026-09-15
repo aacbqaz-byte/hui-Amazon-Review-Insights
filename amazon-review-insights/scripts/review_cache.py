@@ -26,7 +26,7 @@ from validate_report import ReportValidationError, validate_report
 SCHEMA_VERSION = 2
 DEFAULT_PAGE_SIZE = 50
 LEGACY_PAGE_SIZES = (20,)
-MAX_RECORDS = 2000
+DEFAULT_COLLECTION_LIMIT = 2000
 TERMINAL_STATES = {"complete", "capped", "partial", "blocked-empty"}
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -141,6 +141,15 @@ def safe_component(value: str, label: str) -> str:
     return normalized
 
 
+def validate_collection_limit(limit: int) -> int:
+    if not 50 <= limit <= DEFAULT_COLLECTION_LIMIT or limit % DEFAULT_PAGE_SIZE != 0:
+        raise CacheError(
+            "INVALID_LIMIT",
+            f"limit must be between 50 and {DEFAULT_COLLECTION_LIMIT} and divisible by {DEFAULT_PAGE_SIZE}",
+        )
+    return limit
+
+
 class CollectionPaths:
     def __init__(self, args: argparse.Namespace, page_size: int = DEFAULT_PAGE_SIZE) -> None:
         self.workspace = Path(args.workspace).expanduser().resolve()
@@ -183,12 +192,13 @@ def resolve_collection_paths(args: argparse.Namespace) -> CollectionPaths:
     return current
 
 
-def new_manifest(paths: CollectionPaths) -> dict[str, Any]:
+def new_manifest(paths: CollectionPaths, target_limit: int) -> dict[str, Any]:
     now = utc_now()
     return {
         "schemaVersion": SCHEMA_VERSION,
         "identity": paths.identity,
         "request": paths.request_identity(),
+        "targetLimit": target_limit,
         "status": "collecting",
         "savedPages": [],
         "lastCommittedPage": 0,
@@ -263,6 +273,7 @@ def reconcile(paths: CollectionPaths) -> tuple[dict[str, Any], list[dict[str, An
         raise CacheError("CACHE_CORRUPT", "Manifest must be a JSON object")
     validate_manifest(manifest, paths)
 
+    target_limit = validate_collection_limit(manifest.get("targetLimit", DEFAULT_COLLECTION_LIMIT))
     files = sorted(paths.pages.glob("page-*.json")) if paths.pages.exists() else []
     raw: list[dict[str, Any]] = []
     saved_pages: list[int] = []
@@ -289,9 +300,9 @@ def reconcile(paths: CollectionPaths) -> tuple[dict[str, Any], list[dict[str, An
     if status == "collecting" and last_pagination is not None:
         last_page = saved_pages[-1]
         page_count = len(load_json(page_path(paths, last_page))["reviews"])
-        if len(raw) >= MAX_RECORDS:
+        if len(raw) >= target_limit:
             status = "capped"
-            stop_reason = "cap-2000"
+            stop_reason = f"cap-{target_limit}"
         elif isinstance(source_pages, int) and source_pages > 0 and last_page >= source_pages:
             status = "complete"
             stop_reason = "source-pages"
@@ -327,6 +338,7 @@ def reconcile(paths: CollectionPaths) -> tuple[dict[str, Any], list[dict[str, An
             "duplicateCount": len(raw) - len(unique),
             "uniqueCount": len(unique),
             "datasetSha256": sha256_text(canonical_json(unique)),
+            "targetLimit": target_limit,
             "stopReason": stop_reason,
             "pendingRequest": pending_request,
             "updatedAt": utc_now(),
@@ -351,6 +363,7 @@ def public_state(manifest: dict[str, Any], paths: CollectionPaths, **extra: Any)
         "uniqueCount": manifest["uniqueCount"],
         "sourcePages": manifest["sourcePages"],
         "sourceTotal": manifest["sourceTotal"],
+        "targetLimit": manifest["targetLimit"],
         "failure": manifest.get("failure"),
         "pendingPage": (manifest.get("pendingRequest") or {}).get("page"),
     }
@@ -410,6 +423,7 @@ def find_legacy_summary(paths: CollectionPaths) -> Path | None:
 
 
 def command_init(args: argparse.Namespace, paths: CollectionPaths) -> dict[str, Any]:
+    target_limit = validate_collection_limit(args.limit)
     if args.refresh:
         archive_existing(paths)
         for page_size in LEGACY_PAGE_SIZES:
@@ -438,7 +452,7 @@ def command_init(args: argparse.Namespace, paths: CollectionPaths) -> dict[str, 
             summaryPath=str(legacy_summary),
         )
     paths.pages.mkdir(parents=True, exist_ok=True)
-    manifest = new_manifest(paths)
+    manifest = new_manifest(paths, target_limit)
     atomic_write_json(paths.manifest, manifest)
     return public_state(manifest, paths, action="initialized")
 
@@ -620,6 +634,7 @@ def export_bundle(paths: CollectionPaths) -> tuple[dict[str, Any], str]:
             "status": manifest["status"],
             "sourcePages": manifest["sourcePages"],
             "sourceTotal": manifest["sourceTotal"],
+            "targetLimit": manifest["targetLimit"],
             "rawCount": manifest["rawCount"],
             "duplicateCount": manifest["duplicateCount"],
             "uniqueCount": manifest["uniqueCount"],
@@ -719,6 +734,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     init = subparsers.add_parser("init")
     add_identity_arguments(init)
+    init.add_argument("--limit", type=int, default=DEFAULT_COLLECTION_LIMIT)
     init.add_argument("--refresh", action="store_true")
 
     save_page = subparsers.add_parser("save-page")

@@ -271,6 +271,16 @@ class ReviewCacheCliTests(unittest.TestCase):
         self.assertEqual(blocked["status"], "complete")
         self.assertNotIn("request", blocked)
 
+    def test_custom_limit_stops_after_complete_fifty_record_pages(self):
+        self.run_cli("init", "--limit", "100")
+        self.run_cli("next-request")
+        self.save(response(1, 10, 500, [review(i) for i in range(1, 51)]))
+        self.run_cli("next-request")
+        self.save(response(2, 10, 500, [review(i) for i in range(51, 101)]))
+
+        blocked = self.run_cli("next-request", expected=2)
+        self.assertEqual(blocked["status"], "capped")
+
     def test_changed_server_page_size_is_rejected_without_advancing(self):
         self.initialize()
         self.run_cli("next-request")
