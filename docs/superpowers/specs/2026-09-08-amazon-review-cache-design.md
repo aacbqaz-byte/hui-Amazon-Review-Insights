@@ -22,7 +22,7 @@ For the canonical identity `<marketplace>-<asin>-<filter-key>`, use:
   receipts/review-receipt-<identity>.json
 ```
 
-`filter-key` is `stars-<sorted-unique-stars-or-all>_types-<sorted-unique-types-or-all>`. The identity is normalized but still records the original marketplace, ASIN, `starList`, and `typeList` in `manifest.json`. Schema version 2 adds immutable `requestPageSize: 20`; version-1 and size-10 caches cannot be resumed automatically.
+`filter-key` is `stars-<sorted-unique-stars-or-all>_types-<sorted-unique-types-or-all>`. The identity is normalized but still records the original marketplace, ASIN, `starList`, and `typeList` in `manifest.json`. Schema version 2 records an immutable `requestPageSize`. New collections use 50. Matching schema-2 size-20 collections and receipts remain valid and are selected before any new collection is created, preventing a page-size upgrade from causing a recrawl.
 
 Each page file is the source of truth and contains the complete returned review objects plus the page metadata needed for recovery. It does not contain credentials. `reviews.jsonl` is a reconstructed, deduplicated projection for analysis/export; the page files preserve all raw returned reviews, including duplicates and unknown fields.
 
@@ -41,16 +41,16 @@ collecting --record-error--> partial | blocked-empty
 complete/partial --finalize-html--> receipt-backed
 ```
 
-Before the first MCP request, initialize the matching collection. Before every later MCP request—including after context compression—run the helper's `next-request` command. It reconstructs state from saved page files and returns exactly one permitted request containing the immutable marketplace, ASIN, normalized filters, `next_page`, and `size: 20`.
+Before the first MCP request, initialize the matching collection. Before every later MCP request—including after context compression—run the helper's `next-request` command. It reconstructs state from saved page files and returns exactly one permitted request containing the immutable marketplace, ASIN, normalized filters, `next_page`, and the selected collection's page size. New collections use `size: 50`; an existing size-20 collection continues with `size: 20`.
 
 `next-request` atomically records `pendingRequest` before returning an authorization. It refuses to authorize a call when the state is complete, partial, blocked-empty, receipt-backed, or already has an uncommitted pending request. It never authorizes an already saved or pending page. If compression happens after authorization but before persistence, the next process returns `REQUEST_PENDING` and stops rather than spending another MCP call. `save-page` accepts only the authorized next page, checks that returned `data.page` and `data.size` preserve the pagination contract, atomically saves the page, rebuilds aggregate data, clears the pending request, and only then advances `next_page`.
 
-The server response supplied by the user establishes `size: 20`: `total: 433`, `pages: 22`, and `size: 20`. Request and manifest page size are therefore fixed at 20. If the first or any later response reports a different size, stop with a pagination-contract error; never silently change size within a collection.
+The default request page size was upgraded from 20 to 50. The request and manifest page size are immutable for each collection. If the first or any later response reports a different size from that collection's recorded value, stop with a pagination-contract error; never silently change size, retry with another size, or discard saved pages.
 
 A collection becomes complete without probing an extra page when any of these is true:
 
 - the saved page number reaches the documented `data.pages` value;
-- the saved page returns fewer than 20 reviews;
+- the saved page returns fewer reviews than the selected collection's page size;
 - the saved raw record count reaches 2,000.
 
 If source totals/pages are absent, an empty page may be saved as the terminal signal. Never request page `data.pages + 1` merely to confirm the end.
@@ -110,7 +110,7 @@ Tests execute the real helper in separate processes and prove:
 
 1. page 1 is durable and a fresh process authorizes page 2, never page 1;
 2. a second process cannot reauthorize an uncommitted pending page;
-3. `size` stays 20 and a conflicting returned size is rejected without advancing state;
+3. new collections keep `size: 50`, legacy size-20 collections remain resumable, and a conflicting returned size is rejected without advancing state;
 4. saving a page twice is idempotent while conflicting duplicate content is blocked;
 5. the last documented page completes without authorizing an extra probe page;
 6. all input review fields survive raw-page persistence and JSON export;

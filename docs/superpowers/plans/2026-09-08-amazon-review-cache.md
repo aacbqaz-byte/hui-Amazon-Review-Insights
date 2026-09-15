@@ -4,7 +4,7 @@
 
 **Goal:** Add an executable, crash-safe review collection state machine so context compression or process restart can never repeat an already saved SellerSprite page.
 
-**Architecture:** A Python-standard-library CLI owns collection state. Atomic page files are the source of truth, a reconciled manifest authorizes exactly one next MCP request with immutable `size: 20`, and verified offline HTML becomes the durable post-cleanup source through a receipt. Skill prose routes agents through the CLI instead of relying on conversational memory.
+**Architecture:** A Python-standard-library CLI owns collection state. Atomic page files are the source of truth, a reconciled manifest authorizes exactly one next MCP request with immutable page size (50 for new collections; 20 for matching legacy collections), and verified offline HTML becomes the durable post-cleanup source through a receipt. Skill prose routes agents through the CLI instead of relying on conversational memory.
 
 **Tech Stack:** Python 3 standard library, JSON/JSONL, SHA-256, `unittest`, Markdown Skill instructions, standalone offline HTML.
 
@@ -15,7 +15,7 @@
 - The helper is initialized before the first MCP call and consulted before every subsequent MCP call; an atomic pending authorization prevents the same uncommitted page from being released twice.
 - A saved page, terminal collection, partial/error state, blocked-empty state, or valid receipt can never authorize an automatic MCP retry.
 - A matching legacy summary without full reviews blocks initialization unless the user explicitly requests refresh.
-- Pagination size is immutable at `20`; collection stops at 2,000 raw records.
+- Pagination size is immutable per collection; new collections use `50`, matching legacy collections remain at `20`, and collection stops at 2,000 raw records.
 - Raw page files preserve every returned review object; aggregate export preserves every unique review and unknown fields.
 - Every file replacement that advances collection state is atomic.
 - HTML cache cleanup occurs only after embedded dataset count/hash verification; a durable receipt remains.
@@ -40,7 +40,7 @@ Create tests that invoke `python amazon-review-insights/scripts/review_cache.py`
 
 - [ ] **Step 2: Add failing recovery and no-repeat tests**
 
-Require `init` then `next-request` to return page 1/size 20; a second process must receive `REQUEST_PENDING` until that response is committed. After `save-page`, a new CLI process must return page 2/size 20. Require repeated identical page saves to be idempotent and conflicting saves to fail.
+Require `init` then `next-request` to return page 1/size 50 for a new collection; a second process must receive `REQUEST_PENDING` until that response is committed. After `save-page`, a new CLI process must return page 2/size 50. Require repeated identical page saves to be idempotent and conflicting saves to fail. A matching legacy size-20 collection must resume at its next unsaved page with size 20.
 
 - [ ] **Step 3: Add failing terminal/error tests**
 
@@ -71,7 +71,7 @@ Normalize marketplace/ASIN, sorted unique filters, canonical identity, cache pat
 
 - [ ] **Step 2: Implement reconciliation and guarded next request**
 
-Scan contiguous page files, validate page numbers/size, rebuild raw and deduplicated projections, update counts/hash atomically, and authorize only the manifest's next page with `size: 20` while status is `collecting`. Persist `pendingRequest` before returning it and fail closed on a repeated authorization attempt.
+Scan contiguous page files, validate page numbers/size, rebuild raw and deduplicated projections, update counts/hash atomically, and authorize only the manifest's next page with its immutable size while status is `collecting`. Use size 50 for new collections and the recorded size 20 for matching legacy collections. Persist `pendingRequest` before returning it and fail closed on a repeated authorization attempt.
 
 - [ ] **Step 3: Implement page and error persistence**
 
@@ -98,7 +98,7 @@ Run `python -m unittest tests.test_review_cache -v`, then `python -m unittest di
 
 - [ ] **Step 1: Write failing Skill integration assertions**
 
-Update contract tests to require the executable helper path, `size: 20`, initialization before the first MCP call, `next-request` before every call/resume, immediate `save-page`, no page+1 probe, HTML `review-data` embedding, receipt-backed recovery, and a hard stop if Python/cache integrity is unavailable.
+Update contract tests to require the executable helper path, `size: 50` for new collections, legacy size-20 recovery, initialization before the first MCP call, `next-request` before every call/resume, immediate `save-page`, no page+1 probe, HTML `review-data` embedding, receipt-backed recovery, and a hard stop if Python/cache integrity is unavailable.
 
 - [ ] **Step 2: Run the focused tests and verify RED**
 
@@ -106,7 +106,7 @@ Run `python -m unittest tests.test_html_contract -v`; confirm the new assertions
 
 - [ ] **Step 3: Replace prose-only cache instructions with CLI protocol**
 
-Update collection to use page size 20 and the helper sequence. Explicitly state that summaries/progress messages are not durable state, that raw MCP results must be saved before any next request, and that after context compression disk status is authoritative.
+Update new collection to use page size 50 and retain legacy size-20 collection compatibility. Explicitly state that summaries/progress messages are not durable state, that raw MCP results must be saved before any next request, and that after context compression disk status is authoritative.
 
 - [ ] **Step 4: Update offline HTML data contract**
 
@@ -144,6 +144,6 @@ Validate `C:\Users\jjh09\.codex\skills\amazon-review-insights` and run the full 
 
 ## Self-review
 
-- Spec coverage: durable paging, immutable size 20, no page+1 probe, exact error states, raw/unique preservation, HTML verification, receipt recovery, and installed synchronization are each assigned to a task.
+- Spec coverage: durable paging, immutable size 50 for new collections, safe size-20 legacy recovery, no page+1 probe, exact error states, raw/unique preservation, HTML verification, receipt recovery, and installed synchronization are each assigned to a task.
 - Placeholder scan: no placeholder implementation steps or unspecified error handling remain.
 - Interface consistency: command names, cache paths, `data.content`, `review-data`, status names, page size, and the 2,000 cap match the spec.

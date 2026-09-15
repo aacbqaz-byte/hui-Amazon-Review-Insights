@@ -32,7 +32,7 @@ If `init` reports `receipt-backed` / `use_verified_html`, do not call SellerSpri
   "marketplace": "<user-provided marketplace>",
   "asin": "<user-provided ASIN>",
   "page": 1,
-  "size": 20
+  "size": 50
 }
 ```
 
@@ -45,7 +45,7 @@ Immediately after each MCP response, before progress narration, analysis, anothe
 3. Confirm the helper succeeded and delete only that temporary response file. The helper has already atomically saved the full reviews.
 4. Run `next-request` again. Continue only if it authorizes exactly one next page.
 
-The helper fixes page size at 20, persists page files before advancing `nextPage`, stops at the documented final page without an extra empty-page probe, and caps collection at 2,000 raw records. It saves every returned review object losslessly, including unknown future fields, and builds a separate deduplicated `reviews.jsonl` using author, timestamp, title, content, and star. A response whose page or size conflicts with durable state blocks collection without advancing it.
+The helper fixes new collections at page size 50, persists page files before advancing `nextPage`, stops at the documented final page without an extra empty-page probe, and caps collection at 2,000 raw records. It saves every returned review object losslessly, including unknown future fields, and builds a separate deduplicated `reviews.jsonl` using author, timestamp, title, content, and star. A response whose page or size conflicts with durable state blocks collection without advancing it.
 
 Conversation history, progress messages, and collection-summary `.txt` files are not collection state. For backward safety, `init` detects a matching legacy `review-collection-summary-*.txt` without full cached reviews and returns `LEGACY_SUMMARY_ONLY` / `do_not_call_mcp`; report that the old summary cannot reconstruct the reviews and do not automatically recrawl. Only the user's explicit refresh request may bypass this guard. After context compression or interruption, first run `status`, then `next-request`; the on-disk manifest, pending authorization, and page files are authoritative. Never restart at page 1 merely because earlier MCP output is no longer in context.
 
@@ -55,7 +55,7 @@ If `starList` or `typeList` was used, place this exact warning in the report hea
 
 ## Durable local source and outputs
 
-The helper stores live state under `.amazon-review-insights-cache/collections/<identity>/`: `manifest.json`, lossless `pages/page-XXXXXX.json` files, and deduplicated `reviews.jsonl`. Schema version 2 includes immutable `requestPageSize: 20`; never resume an older or size-10 cache with size 20. Exact equality of ASIN, marketplace, normalized filters, schema, and page size is required.
+The helper stores live state under `.amazon-review-insights-cache/collections/<identity>/`: `manifest.json`, lossless `pages/page-XXXXXX.json` files, and deduplicated `reviews.jsonl`. Schema version 2 includes an immutable `requestPageSize`; new collections use 50. A matching existing schema-2 size-20 collection or receipt is deliberately selected and remains at size 20 so saved pages are never repeated. Never change page size inside a collection. Exact equality of ASIN, marketplace, normalized filters, schema, and page size is required after the compatible collection is selected.
 
 Generate every artifact from `export-json --output <local-input.json>`, never from MCP output retained in conversation. This applies to analysis HTML, review-display HTML, and `.xlsx` export. If collection is still `collecting`, finish through guarded `next-request`; if it is `partial`, use it only after the user chooses a partial-data output.
 

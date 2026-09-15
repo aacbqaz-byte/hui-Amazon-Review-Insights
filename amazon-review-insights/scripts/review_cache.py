@@ -24,7 +24,8 @@ from validate_report import ReportValidationError, validate_report
 
 
 SCHEMA_VERSION = 2
-PAGE_SIZE = 20
+DEFAULT_PAGE_SIZE = 50
+LEGACY_PAGE_SIZES = (20,)
 MAX_RECORDS = 2000
 TERMINAL_STATES = {"complete", "capped", "partial", "blocked-empty"}
 
@@ -141,16 +142,17 @@ def safe_component(value: str, label: str) -> str:
 
 
 class CollectionPaths:
-    def __init__(self, args: argparse.Namespace) -> None:
+    def __init__(self, args: argparse.Namespace, page_size: int = DEFAULT_PAGE_SIZE) -> None:
         self.workspace = Path(args.workspace).expanduser().resolve()
         self.marketplace = safe_component(args.marketplace, "marketplace")
         self.asin = safe_component(args.asin, "asin")
         self.stars = normalize_values(args.stars, 1, 5, "starList")
         self.types = normalize_values(args.types, 1, 4, "typeList")
+        self.page_size = page_size
         stars_key = "-".join(map(str, self.stars)) if self.stars else "all"
         types_key = "-".join(map(str, self.types)) if self.types else "all"
         self.filter_key = f"stars-{stars_key}_types-{types_key}"
-        self.identity = f"{self.marketplace}-{self.asin}-{self.filter_key}-size-{PAGE_SIZE}"
+        self.identity = f"{self.marketplace}-{self.asin}-{self.filter_key}-size-{self.page_size}"
         self.root = self.workspace / ".amazon-review-insights-cache"
         self.collection = self.root / "collections" / self.identity
         self.pages = self.collection / "pages"
@@ -164,8 +166,21 @@ class CollectionPaths:
             "asin": self.asin,
             "starList": self.stars,
             "typeList": self.types,
-            "requestPageSize": PAGE_SIZE,
+            "requestPageSize": self.page_size,
         }
+
+
+def resolve_collection_paths(args: argparse.Namespace) -> CollectionPaths:
+    current = CollectionPaths(args)
+    if args.command == "init" and args.refresh:
+        return current
+    if current.manifest.exists() or current.receipt.exists():
+        return current
+    for page_size in LEGACY_PAGE_SIZES:
+        legacy = CollectionPaths(args, page_size=page_size)
+        if legacy.manifest.exists() or legacy.receipt.exists():
+            return legacy
+    return current
 
 
 def new_manifest(paths: CollectionPaths) -> dict[str, Any]:
@@ -236,8 +251,8 @@ def validate_page_file(page_value: dict[str, Any], paths: CollectionPaths, expec
     reviews = page_value.get("reviews")
     if not isinstance(pagination, dict) or pagination.get("page") != expected_page:
         raise CacheError("CACHE_CORRUPT", f"Page {expected_page} has invalid pagination")
-    if pagination.get("size") != PAGE_SIZE:
-        raise CacheError("CACHE_CORRUPT", f"Page {expected_page} does not use size {PAGE_SIZE}")
+    if pagination.get("size") != paths.page_size:
+        raise CacheError("CACHE_CORRUPT", f"Page {expected_page} does not use size {paths.page_size}")
     if not isinstance(reviews, list) or any(not isinstance(item, dict) for item in reviews):
         raise CacheError("CACHE_CORRUPT", f"Page {expected_page} has invalid reviews")
 
@@ -280,7 +295,7 @@ def reconcile(paths: CollectionPaths) -> tuple[dict[str, Any], list[dict[str, An
         elif isinstance(source_pages, int) and source_pages > 0 and last_page >= source_pages:
             status = "complete"
             stop_reason = "source-pages"
-        elif page_count < PAGE_SIZE:
+        elif page_count < paths.page_size:
             status = "complete"
             stop_reason = "empty-page" if page_count == 0 else "short-page"
 
@@ -397,6 +412,8 @@ def find_legacy_summary(paths: CollectionPaths) -> Path | None:
 def command_init(args: argparse.Namespace, paths: CollectionPaths) -> dict[str, Any]:
     if args.refresh:
         archive_existing(paths)
+        for page_size in LEGACY_PAGE_SIZES:
+            archive_existing(CollectionPaths(args, page_size=page_size))
     elif paths.receipt.exists():
         receipt, reviews = read_valid_receipt(paths)
         return {
@@ -481,7 +498,7 @@ def command_next_request(args: argparse.Namespace, paths: CollectionPaths) -> di
         "marketplace": paths.marketplace,
         "asin": paths.asin,
         "page": manifest["nextPage"],
-        "size": PAGE_SIZE,
+        "size": paths.page_size,
     }
     if paths.stars:
         request["starList"] = paths.stars
@@ -508,14 +525,14 @@ def build_page_value(response: dict[str, Any], paths: CollectionPaths) -> dict[s
     records = data.get("content")
     if not isinstance(current_page, int) or current_page < 1:
         raise CacheError("INVALID_MCP_RESPONSE", "data.page must be a positive integer")
-    if size != PAGE_SIZE:
-        raise CacheError("PAGE_SIZE_MISMATCH", f"Expected data.size={PAGE_SIZE}, received {size}")
+    if size != paths.page_size:
+        raise CacheError("PAGE_SIZE_MISMATCH", f"Expected data.size={paths.page_size}, received {size}")
     if not isinstance(records, list) or any(not isinstance(item, dict) for item in records):
         raise CacheError("INVALID_MCP_RESPONSE", "data.content must be an array of review objects")
-    if len(records) > PAGE_SIZE:
+    if len(records) > paths.page_size:
         raise CacheError(
             "PAGE_RECORD_OVERFLOW",
-            f"Page contains {len(records)} reviews but declared page size is {PAGE_SIZE}",
+            f"Page contains {len(records)} reviews but declared page size is {paths.page_size}",
         )
     metadata = {key: value for key, value in data.items() if key != "content"}
     return {
@@ -736,7 +753,7 @@ COMMANDS = {
 def main() -> int:
     try:
         args = build_parser().parse_args()
-        paths = CollectionPaths(args)
+        paths = resolve_collection_paths(args)
         result = COMMANDS[args.command](args, paths)
         print(json.dumps(result, ensure_ascii=False))
         return 0

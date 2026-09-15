@@ -34,7 +34,7 @@ def review(number: int) -> dict:
     }
 
 
-def response(page: int, pages: int, total: int, records: list[dict], size: int = 20) -> dict:
+def response(page: int, pages: int, total: int, records: list[dict], size: int = 50) -> dict:
     return {
         "code": "OK",
         "message": "成功",
@@ -126,19 +126,115 @@ class ReviewCacheCliTests(unittest.TestCase):
         path = self.write_response(name, payload)
         return self.run_cli("save-page", "--response-file", str(path), expected=expected)
 
-    def test_new_process_resumes_at_next_unsaved_page_with_size_twenty(self):
+    def seed_size_twenty_collection(
+        self,
+        records: list[dict],
+        *,
+        pages: int,
+        total: int,
+    ) -> Path:
+        identity = "US-B0DURABLE01-stars-all_types-all-size-20"
+        collection = (
+            self.workspace
+            / ".amazon-review-insights-cache"
+            / "collections"
+            / identity
+        )
+        page_dir = collection / "pages"
+        page_dir.mkdir(parents=True)
+        manifest = {
+            "schemaVersion": 2,
+            "identity": identity,
+            "request": {
+                "marketplace": "US",
+                "asin": "B0DURABLE01",
+                "starList": [],
+                "typeList": [],
+                "requestPageSize": 20,
+            },
+            "status": "collecting",
+            "pendingRequest": None,
+            "createdAt": "2026-09-08T00:00:00+00:00",
+        }
+        page = {
+            "schemaVersion": 2,
+            "identity": identity,
+            "pagination": {"page": 1, "size": 20, "pages": pages, "total": total},
+            "reviews": records,
+        }
+        (collection / "manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        (page_dir / "page-000001.json").write_text(
+            json.dumps(page, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return collection
+
+    def test_new_process_resumes_at_next_unsaved_page_with_size_fifty(self):
         self.initialize()
         first = self.run_cli("next-request")
         self.assertEqual(first["action"], "call_mcp")
-        self.assertEqual(first["request"], {"marketplace": "US", "asin": "B0DURABLE01", "page": 1, "size": 20})
+        self.assertEqual(first["request"], {"marketplace": "US", "asin": "B0DURABLE01", "page": 1, "size": 50})
 
-        saved = self.save(response(1, 3, 45, [review(i) for i in range(1, 21)]))
+        saved = self.save(response(1, 3, 145, [review(i) for i in range(1, 51)]))
         self.assertEqual(saved["nextPage"], 2)
 
         resumed = self.run_cli("next-request")
         self.assertEqual(resumed["request"]["page"], 2)
-        self.assertEqual(resumed["request"]["size"], 20)
+        self.assertEqual(resumed["request"]["size"], 50)
         self.assertEqual(resumed["savedPages"], [1])
+
+    def test_existing_size_twenty_collection_resumes_without_restarting_at_fifty(self):
+        legacy = self.seed_size_twenty_collection(
+            [review(i) for i in range(1, 21)],
+            pages=3,
+            total=45,
+        )
+
+        initialized = self.initialize()
+        self.assertEqual(initialized["action"], "resume_existing")
+        self.assertEqual(Path(initialized["collectionPath"]), legacy)
+
+        resumed = self.run_cli("next-request")
+        self.assertEqual(resumed["request"]["page"], 2)
+        self.assertEqual(resumed["request"]["size"], 20)
+
+    def test_existing_size_twenty_receipt_is_reused_instead_of_recrawled(self):
+        originals = [review(1), review(2)]
+        legacy = self.seed_size_twenty_collection(originals, pages=1, total=2)
+        html = self.workspace / "legacy-report.html"
+        html.write_text(interactive_report_html(originals), encoding="utf-8")
+
+        finalized = self.run_cli("finalize-html", "--html", str(html))
+        self.assertFalse(legacy.exists())
+        self.assertEqual(finalized["status"], "receipt-backed")
+
+        initialized = self.initialize()
+        self.assertEqual(initialized["action"], "use_verified_html")
+        blocked = self.run_cli("next-request", expected=2)
+        self.assertEqual(blocked["status"], "receipt-backed")
+
+    def test_explicit_refresh_archives_size_twenty_state_and_starts_at_fifty(self):
+        legacy = self.seed_size_twenty_collection(
+            [review(i) for i in range(1, 21)],
+            pages=3,
+            total=45,
+        )
+
+        refreshed = self.run_cli("init", "--refresh")
+        self.assertEqual(refreshed["action"], "initialized")
+        self.assertTrue(refreshed["identity"].endswith("size-50"))
+        self.assertFalse(legacy.exists())
+        archives = list(
+            (self.workspace / ".amazon-review-insights-cache" / "archive").glob(
+                "US-B0DURABLE01-stars-all_types-all-size-20-*"
+            )
+        )
+        self.assertEqual(len(archives), 1)
+        self.assertTrue((archives[0] / "collection").is_dir())
+        self.assertEqual(self.run_cli("next-request")["request"]["size"], 50)
 
     def test_uncommitted_authorization_blocks_the_same_page_after_restart(self):
         self.initialize()
@@ -193,7 +289,7 @@ class ReviewCacheCliTests(unittest.TestCase):
         self.initialize()
         self.run_cli("next-request")
         failure = self.save(
-            response(1, 2, 21, [review(i) for i in range(1, 22)]),
+            response(1, 2, 51, [review(i) for i in range(1, 52)]),
             expected=2,
         )
         self.assertEqual(failure["error"], "PAGE_RECORD_OVERFLOW")
@@ -202,14 +298,14 @@ class ReviewCacheCliTests(unittest.TestCase):
     def test_identical_page_is_idempotent_but_conflicting_page_is_blocked(self):
         self.initialize()
         self.run_cli("next-request")
-        payload = response(1, 2, 40, [review(i) for i in range(1, 21)])
+        payload = response(1, 2, 100, [review(i) for i in range(1, 51)])
         self.save(payload)
 
         repeated = self.save(payload, "same.json")
         self.assertEqual(repeated["action"], "already_saved")
-        self.assertEqual(repeated["rawCount"], 20)
+        self.assertEqual(repeated["rawCount"], 50)
 
-        conflicting = response(1, 2, 40, [review(i) for i in range(101, 121)])
+        conflicting = response(1, 2, 100, [review(i) for i in range(101, 151)])
         rejected = self.save(conflicting, "conflict.json", expected=2)
         self.assertEqual(rejected["error"], "PAGE_CONFLICT")
         self.assertEqual(self.run_cli("status")["nextPage"], 2)
@@ -225,12 +321,12 @@ class ReviewCacheCliTests(unittest.TestCase):
         self.assertEqual(exported["reviewCount"], 1)
         bundle = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual(bundle["reviews"], [original])
-        self.assertEqual(bundle["metadata"]["requestPageSize"], 20)
+        self.assertEqual(bundle["metadata"]["requestPageSize"], 50)
 
     def test_visit_limit_with_saved_reviews_is_partial_and_blocks_more_calls(self):
         self.initialize()
         self.run_cli("next-request")
-        self.save(response(1, 2, 25, [review(i) for i in range(1, 21)]))
+        self.save(response(1, 2, 75, [review(i) for i in range(1, 51)]))
         self.run_cli("next-request")
         error_file = self.write_response(
             "visit-limit.json",
