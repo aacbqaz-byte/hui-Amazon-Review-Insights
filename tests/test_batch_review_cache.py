@@ -132,6 +132,97 @@ class BatchReviewCacheCliTests(unittest.TestCase):
         self.run_batch("export-json", "--batch-id", batch["batchId"], "--output", str(output))
         return json.loads(output.read_text(encoding="utf-8"))
 
+    def run_single(self, command: str, asin: str, *extra: str, expected: int = 0) -> dict:
+        completed = subprocess.run(
+            [sys.executable, str(REVIEW_SCRIPT), command, "--workspace", str(self.workspace),
+             "--marketplace", "US", "--asin", asin, *extra],
+            text=True, encoding="utf-8", capture_output=True, check=False,
+        )
+        self.assertEqual(completed.returncode, expected, completed.stdout + completed.stderr)
+        return json.loads(completed.stdout)
+
+    def completed_batch(self) -> tuple[dict, dict]:
+        batch = self.init_batch(["B000000001", "B000000002"])
+        self.complete_member(batch, "B000000001", [{"id": "shared", "content": "one", "asin": "raw-value", "details": {"rating": 5}}])
+        self.complete_member(batch, "B000000002", [{"id": "shared", "content": "two"}])
+        return batch, self.export_batch(batch)
+
+    def batch_html(self, bundle: dict) -> Path:
+        html = self.workspace / "joint.html"
+        source = json.dumps(bundle["sourceIndex"], ensure_ascii=False).replace("<", "\\u003c")
+        block = f'<script type="application/json" id="review-source-index">{source}</script>'
+        html.write_text(interactive_report_html(bundle["reviews"]).replace('</body>', block + '</body>'), encoding="utf-8")
+        return html
+
+    def assert_live_caches_preserved(self, batch: dict) -> None:
+        for member in batch["members"]:
+            self.assertTrue(Path(member["manifestPath"]).is_file())
+            self.assertTrue((Path(member["manifestPath"]).parent / "pages" / "page-000001.json").is_file())
+        receipts = self.workspace / ".amazon-review-insights-cache" / "receipts"
+        self.assertEqual(list(receipts.glob("*.json")), [])
+
+    def test_finalize_batch_writes_member_receipts_then_removes_live_caches(self):
+        batch, bundle = self.completed_batch()
+        html = self.batch_html(bundle)
+        result = self.run_batch("finalize-html", "--batch-id", batch["batchId"], "--html", str(html))
+        self.assertEqual(result["status"], "receipt-backed")
+        for member, dataset in zip(batch["members"], bundle["datasets"]):
+            self.assertFalse(Path(member["manifestPath"]).parent.exists())
+            output = self.workspace / f'{member["asin"]}-recovered.json'
+            exported = self.run_single("export-json", member["asin"], "--output", str(output))
+            self.assertEqual(exported["source"], "verified-html")
+            recovered = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(recovered["reviews"], dataset["reviews"])
+            blocked = self.run_single("next-request", member["asin"], expected=2)
+            self.assertEqual(blocked["error"], "MCP_CALL_BLOCKED")
+            self.assertEqual(blocked["uniqueCount"], 1)
+        self.assertEqual(self.export_batch(batch)["reviews"], bundle["reviews"])
+
+    def test_finalize_last_member_hash_mismatch_preserves_every_cache(self):
+        batch, bundle = self.completed_batch()
+        bundle["reviews"][-1]["content"] = "modified"
+        result = self.run_batch("finalize-html", "--batch-id", batch["batchId"], "--html", str(self.batch_html(bundle)), expected=2)
+        self.assertEqual(result["error"], "HTML_DATASET_MISMATCH")
+        self.assert_live_caches_preserved(batch)
+
+    def test_finalize_rejects_unknown_source_without_ignoring_extra_reviews(self):
+        batch, bundle = self.completed_batch()
+        bundle["reviews"].append({"content": "untracked"})
+        bundle["sourceIndex"].append({"marketplace": "CA", "asin": "B000000001"})
+        result = self.run_batch("finalize-html", "--batch-id", batch["batchId"], "--html", str(self.batch_html(bundle)), expected=2)
+        self.assertEqual(result["error"], "HTML_DATASET_MISMATCH")
+        self.assert_live_caches_preserved(batch)
+
+    def test_finalize_requires_source_index(self):
+        batch, bundle = self.completed_batch()
+        html = self.workspace / "joint.html"
+        html.write_text(interactive_report_html(bundle["reviews"]), encoding="utf-8")
+        result = self.run_batch("finalize-html", "--batch-id", batch["batchId"], "--html", str(html), expected=2)
+        self.assertEqual(result["error"], "REVIEW_SOURCE_INDEX_MISSING")
+        self.assert_live_caches_preserved(batch)
+
+    def test_finalize_reuses_an_existing_single_member_receipt(self):
+        batch, bundle = self.completed_batch()
+        single_html = self.workspace / "single.html"
+        single_html.write_text(interactive_report_html(bundle["datasets"][1]["reviews"]), encoding="utf-8")
+        self.run_single("finalize-html", "B000000002", "--html", str(single_html))
+        html = self.batch_html(bundle)
+        result = self.run_batch("finalize-html", "--batch-id", batch["batchId"], "--html", str(html))
+        self.assertEqual(result["status"], "receipt-backed")
+        # Repeating finalization is safe after all member caches have been removed.
+        repeated = self.run_batch("finalize-html", "--batch-id", batch["batchId"], "--html", str(html))
+        self.assertEqual(repeated["status"], "receipt-backed")
+        self.assertEqual(self.export_batch(batch)["reviews"], bundle["reviews"])
+
+    def test_finalize_rejects_html_inside_member_cache_before_cleanup(self):
+        batch, bundle = self.completed_batch()
+        html = Path(batch["members"][1]["manifestPath"]).parent / "joint.html"
+        html.write_text(self.batch_html(bundle).read_text(encoding="utf-8"), encoding="utf-8")
+        result = self.run_batch("finalize-html", "--batch-id", batch["batchId"], "--html", str(html), expected=2)
+        self.assertEqual(result["error"], "HTML_PATH_UNSAFE")
+        self.assert_live_caches_preserved(batch)
+        self.assertTrue(html.is_file())
+
     def test_batch_export_preserves_reviews_and_parallel_source_index(self):
         batch = self.init_batch(["B000000001", "B000000002"])
         self.complete_member(batch, "B000000001", [{"content": "one"}])

@@ -141,6 +141,36 @@ class ReportValidatorCliTests(unittest.TestCase):
         self.assertEqual(result["panelCount"], 2)
         self.assertEqual(result["reviewCount"], 1)
 
+    def source_index_html(self, source_index) -> str:
+        block = '<script type="application/json" id="review-source-index">' + json.dumps(source_index) + '</script>'
+        return report_html([{"content": "a"}]).replace('</body>', block + '</body>')
+
+    def test_rejects_batch_source_index_length_mismatch(self):
+        result = self.run_validator(self.source_index_html([]), expected=2)
+        self.assertEqual(result["error"], "REVIEW_SOURCE_INDEX_MISMATCH")
+
+    def test_rejects_invalid_source_index_objects(self):
+        for value in (None, {}, [None], [{}], [{"marketplace": "US", "asin": " "}],
+                      [{"marketplace": 1, "asin": "B000000001"}]):
+            with self.subTest(value=value):
+                result = self.run_validator(self.source_index_html(value), expected=2)
+                self.assertEqual(result["error"], "REVIEW_SOURCE_INDEX_INVALID")
+
+    def test_rejects_source_index_invalid_json(self):
+        html = self.source_index_html([]).replace('id="review-source-index">[]', 'id="review-source-index">{')
+        result = self.run_validator(html, expected=2)
+        self.assertEqual(result["error"], "REVIEW_SOURCE_INDEX_INVALID")
+
+    def test_valid_source_index_preserves_report_validation(self):
+        result = self.run_validator(self.source_index_html([{"marketplace": "US", "asin": "B000000001"}]))
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["reviewCount"], 1)
+
+    def test_rejects_source_index_with_non_json_script_type(self):
+        html = self.source_index_html([]).replace('type="application/json" id="review-source-index"', 'type="text/plain" id="review-source-index"')
+        result = self.run_validator(html, expected=2)
+        self.assertEqual(result["error"], "REVIEW_SOURCE_INDEX_INVALID")
+
     def test_aria_controls_navigation_and_legacy_download_id_are_valid(self):
         html = report_html([{"content": "works"}], runtime=ARIA_CONTROLS_RUNTIME)
         html = html.replace('id="download-html"', 'id="download"')

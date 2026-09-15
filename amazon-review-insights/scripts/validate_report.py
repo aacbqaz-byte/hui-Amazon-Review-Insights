@@ -89,6 +89,8 @@ def read_report(path: Path) -> tuple[ReportParser, list[str], list[dict[str, Any
                 source=attrs["src"],
             )
         script_type = (attrs.get("type") or "text/javascript").lower()
+        if attrs.get("id") == "review-source-index" and script_type != "application/json":
+            raise ReportValidationError("REVIEW_SOURCE_INDEX_INVALID", "review-source-index must use type=application/json")
         content = "".join(script["parts"])
         if script_type == "application/json":
             json_scripts.append({"attrs": attrs, "content": content})
@@ -192,6 +194,27 @@ def validate_review_data(json_scripts: list[dict[str, Any]]) -> int:
     return len(reviews)
 
 
+def validate_review_source_index(json_scripts: list[dict[str, Any]], review_count: int) -> list[dict[str, str]] | None:
+    matches = [script for script in json_scripts if script["attrs"].get("id") == "review-source-index"]
+    if not matches:
+        return None
+    try:
+        source_index = json.loads(matches[0]["content"])
+    except json.JSONDecodeError as exc:
+        raise ReportValidationError("REVIEW_SOURCE_INDEX_INVALID", f"review-source-index is invalid JSON: {exc}") from exc
+    if not isinstance(source_index, list) or any(
+        not isinstance(item, dict) or any(
+            not isinstance(item.get(field), str) or not item[field].strip()
+            for field in ("marketplace", "asin")
+        )
+        for item in source_index
+    ):
+        raise ReportValidationError("REVIEW_SOURCE_INDEX_INVALID", "review-source-index must contain objects with non-empty marketplace and asin strings")
+    if len(source_index) != review_count:
+        raise ReportValidationError("REVIEW_SOURCE_INDEX_MISMATCH", "review-source-index must have one entry per review", reviewCount=review_count, sourceCount=len(source_index))
+    return source_index
+
+
 def validate_javascript(executable: list[str], node: str | None = None) -> None:
     if not executable:
         raise ReportValidationError("JS_MISSING", "Report has no executable inline JavaScript")
@@ -231,6 +254,7 @@ def validate_report(path: Path, node: str | None = None) -> dict[str, Any]:
         validate_review_browser(parser, executable)
     validate_download(parser, executable)
     review_count = validate_review_data(json_scripts)
+    validate_review_source_index(json_scripts, review_count)
     return {
         "ok": True,
         "status": "valid",

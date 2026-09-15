@@ -20,7 +20,7 @@ import sys
 import tempfile
 from typing import Any
 
-from validate_report import ReportValidationError, validate_report
+from validate_report import ReportValidationError, read_report, validate_report, validate_review_source_index
 
 
 SCHEMA_VERSION = 2
@@ -400,6 +400,14 @@ def parse_html_reviews(path: Path) -> list[dict[str, Any]]:
     return reviews
 
 
+def parse_html_source_index(path: Path, review_count: int) -> list[dict[str, str]] | None:
+    try:
+        _, _, json_scripts = read_report(path)
+        return validate_review_source_index(json_scripts, review_count)
+    except ReportValidationError as exc:
+        raise CacheError(exc.code, exc.message, **exc.details) from exc
+
+
 def read_valid_receipt(paths: CollectionPaths) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     receipt = load_json(paths.receipt)
     if not isinstance(receipt, dict) or receipt.get("schemaVersion") != SCHEMA_VERSION:
@@ -410,6 +418,14 @@ def read_valid_receipt(paths: CollectionPaths) -> tuple[dict[str, Any], list[dic
     if not html_path.is_file() or sha256_file(html_path) != receipt.get("htmlSha256"):
         raise CacheError("RECEIPT_SOURCE_INVALID", "Receipt-backed HTML is missing or changed; automatic crawling is blocked")
     reviews = parse_html_reviews(html_path)
+    if "batchId" in receipt:
+        source_index = parse_html_source_index(html_path, len(reviews))
+        if source_index is None:
+            raise CacheError("RECEIPT_SOURCE_INVALID", "Batch receipt requires review-source-index")
+        reviews = [
+            review for review, source in zip(reviews, source_index)
+            if source["marketplace"] == paths.marketplace and source["asin"] == paths.asin
+        ]
     if len(reviews) != receipt.get("reviewCount") or sha256_text(canonical_json(reviews)) != receipt.get("datasetSha256"):
         raise CacheError("RECEIPT_SOURCE_INVALID", "Receipt-backed HTML review data does not match its receipt")
     return receipt, reviews

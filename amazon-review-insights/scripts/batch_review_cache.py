@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import sys
 from typing import Any
 
@@ -241,6 +242,74 @@ def command_export_json(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def command_finalize_html(args: argparse.Namespace) -> dict[str, Any]:
+    manifest = load_batch(args.workspace, args.batch_id)
+    request = manifest["request"]
+    html_path = Path(args.html).expanduser().resolve()
+    try:
+        review_cache.validate_report(html_path)
+    except review_cache.ReportValidationError as exc:
+        raise review_cache.CacheError(exc.code, exc.message, **exc.details) from exc
+    reviews = review_cache.parse_html_reviews(html_path)
+    source_index = review_cache.parse_html_source_index(html_path, len(reviews))
+    if source_index is None:
+        raise review_cache.CacheError("REVIEW_SOURCE_INDEX_MISSING", "Joint reports require review-source-index")
+    member_reviews: dict[str, list[dict[str, Any]]] = {asin: [] for asin in manifest["displayOrder"]}
+    for review, source in zip(reviews, source_index):
+        if source["marketplace"] != request["marketplace"] or source["asin"] not in member_reviews:
+            raise review_cache.CacheError("HTML_DATASET_MISMATCH", "Joint HTML contains a source outside this batch; all caches were preserved")
+        member_reviews[source["asin"]].append(review)
+
+    prepared = []
+    html_hash = review_cache.sha256_file(html_path)
+    for asin in manifest["displayOrder"]:
+        _, paths = member_paths(args.workspace, request, asin, "finalize-html")
+        if html_path.is_relative_to(paths.collection.resolve()):
+            raise review_cache.CacheError("HTML_PATH_UNSAFE", "Joint HTML must be saved outside member collection directories before cleanup")
+        require_member_target_compatibility(paths, request)
+        bundle, _ = review_cache.export_bundle(paths)
+        metadata = dict(bundle["metadata"])
+        dataset_hash = review_cache.sha256_text(canonical_json(member_reviews[asin]))
+        if len(member_reviews[asin]) != metadata["uniqueCount"] or dataset_hash != metadata["datasetSha256"]:
+            raise review_cache.CacheError(
+                "HTML_DATASET_MISMATCH", "Joint HTML does not match a complete member dataset; all caches were preserved",
+                asin=asin, expectedCount=metadata["uniqueCount"], actualCount=len(member_reviews[asin]),
+            )
+        collection_status = metadata.pop("status", "receipt-backed")
+        metadata.setdefault("collectionStatus", collection_status)
+        receipt = {
+            "schemaVersion": review_cache.SCHEMA_VERSION,
+            "identity": paths.identity,
+            "request": paths.request_identity(),
+            "status": "receipt-backed",
+            "batchId": manifest["batchId"],
+            "htmlPath": str(html_path),
+            "htmlSha256": html_hash,
+            "datasetSha256": dataset_hash,
+            "reviewCount": len(member_reviews[asin]),
+            "metadata": metadata,
+            "createdAt": review_cache.utc_now(),
+        }
+        prepared.append((paths, receipt))
+
+    # All members must validate before any receipt can authorize recovery.
+    for paths, receipt in prepared:
+        review_cache.atomic_write_json(paths.receipt, receipt)
+    # A write failure above leaves every live collection available for retry.
+    for paths, _ in prepared:
+        if paths.collection.exists():
+            shutil.rmtree(paths.collection)
+    return {
+        "ok": True,
+        "action": "cache_replaced_by_verified_html",
+        "status": "receipt-backed",
+        "batchId": manifest["batchId"],
+        "htmlPath": str(html_path),
+        "reviewCount": len(reviews),
+        "receiptPaths": [str(paths.receipt) for paths, _ in prepared],
+    }
+
+
 def add_workspace_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--workspace", required=True)
 
@@ -282,6 +351,10 @@ def build_parser() -> argparse.ArgumentParser:
     add_workspace_argument(export_json)
     export_json.add_argument("--batch-id", required=True)
     export_json.add_argument("--output", required=True)
+    finalize_html = subparsers.add_parser("finalize-html")
+    add_workspace_argument(finalize_html)
+    finalize_html.add_argument("--batch-id", required=True)
+    finalize_html.add_argument("--html", required=True)
     return parser
 
 
@@ -292,6 +365,7 @@ COMMANDS = {
     "save-page": command_save_page,
     "record-error": command_record_error,
     "export-json": command_export_json,
+    "finalize-html": command_finalize_html,
 }
 
 
