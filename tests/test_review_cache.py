@@ -281,6 +281,25 @@ class ReviewCacheCliTests(unittest.TestCase):
         blocked = self.run_cli("next-request", expected=2)
         self.assertEqual(blocked["status"], "capped")
 
+    def test_init_rejects_limits_outside_fifty_record_page_boundaries(self):
+        for limit in ("49", "51", "75", "2001"):
+            with self.subTest(limit=limit):
+                rejected = self.run_cli("init", "--limit", limit, expected=2)
+                self.assertEqual(rejected["error"], "INVALID_LIMIT")
+
+    def test_legacy_manifest_defaults_target_limit_to_two_thousand(self):
+        self.seed_size_twenty_collection(
+            [review(i) for i in range(1, 21)],
+            pages=3,
+            total=45,
+        )
+
+        resumed = self.initialize()
+        status = self.run_cli("status")
+
+        self.assertEqual(resumed["targetLimit"], 2000)
+        self.assertEqual(status["targetLimit"], 2000)
+
     def test_changed_server_page_size_is_rejected_without_advancing(self):
         self.initialize()
         self.run_cli("next-request")

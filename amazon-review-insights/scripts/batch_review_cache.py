@@ -112,6 +112,12 @@ def member_paths(workspace: str, request: dict[str, Any], asin: str, command: st
     return args, review_cache.resolve_collection_paths(args)
 
 
+def require_member_target_compatibility(paths: review_cache.CollectionPaths, request: dict[str, Any]) -> None:
+    if paths.manifest.exists():
+        manifest, _ = review_cache.reconcile(paths)
+        review_cache.require_target_limit_compatibility(manifest, request["targetLimit"])
+
+
 def member_state(workspace: str, request: dict[str, Any], asin: str) -> dict[str, Any]:
     args, paths = member_paths(workspace, request, asin, "status")
     state = review_cache.command_status(args, paths)
@@ -147,6 +153,12 @@ def command_init(args: argparse.Namespace) -> dict[str, Any]:
             "displayOrder": display_order,
             "createdAt": review_cache.utc_now(),
         }
+
+    for asin in manifest["displayOrder"]:
+        _, paths = member_paths(args.workspace, manifest["request"], asin, "init")
+        require_member_target_compatibility(paths, manifest["request"])
+
+    if not manifest_path.exists():
         review_cache.atomic_write_json(manifest_path, manifest)
 
     for asin in manifest["displayOrder"]:
@@ -163,6 +175,7 @@ def selected_member(args: argparse.Namespace) -> tuple[dict[str, Any], str, argp
         raise review_cache.CacheError("BATCH_MEMBER_MISSING", f"ASIN {asin} is not in batch {args.batch_id}")
     member_args = member_arguments(args.workspace, manifest["request"], asin, args.command)
     paths = review_cache.resolve_collection_paths(member_args)
+    require_member_target_compatibility(paths, manifest["request"])
     return manifest, asin, member_args, paths
 
 
@@ -199,6 +212,7 @@ def command_export_json(args: argparse.Namespace) -> dict[str, Any]:
     source_index: list[dict[str, str]] = []
     for asin in manifest["displayOrder"]:
         _, paths = member_paths(args.workspace, manifest["request"], asin, "export-json")
+        require_member_target_compatibility(paths, manifest["request"])
         bundle, source = review_cache.export_bundle(paths)
         member_reviews = bundle["reviews"]
         datasets.append({"asin": asin, "source": source, **bundle})

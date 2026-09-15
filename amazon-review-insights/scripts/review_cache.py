@@ -228,6 +228,18 @@ def validate_manifest(manifest: dict[str, Any], paths: CollectionPaths) -> None:
         raise CacheError("CACHE_IDENTITY_MISMATCH", "Cache identity does not match this request")
 
 
+def require_target_limit_compatibility(manifest: dict[str, Any], requested_limit: int) -> int:
+    actual_limit = validate_collection_limit(manifest.get("targetLimit", DEFAULT_COLLECTION_LIMIT))
+    if requested_limit != actual_limit:
+        raise CacheError(
+            "TARGET_LIMIT_CONFLICT",
+            "The existing collection uses a different target limit; do not share or authorize it automatically",
+            requestedTargetLimit=requested_limit,
+            actualTargetLimit=actual_limit,
+        )
+    return actual_limit
+
+
 def fingerprint(review: dict[str, Any]) -> str:
     fields = [
         review.get("author"),
@@ -363,6 +375,7 @@ def public_state(manifest: dict[str, Any], paths: CollectionPaths, **extra: Any)
         "uniqueCount": manifest["uniqueCount"],
         "sourcePages": manifest["sourcePages"],
         "sourceTotal": manifest["sourceTotal"],
+        "requestPageSize": paths.page_size,
         "targetLimit": manifest["targetLimit"],
         "failure": manifest.get("failure"),
         "pendingPage": (manifest.get("pendingRequest") or {}).get("page"),
@@ -441,6 +454,7 @@ def command_init(args: argparse.Namespace, paths: CollectionPaths) -> dict[str, 
         }
     if paths.manifest.exists():
         manifest, _ = reconcile(paths)
+        require_target_limit_compatibility(manifest, target_limit)
         return public_state(manifest, paths, action="resume_existing")
     legacy_summary = None if args.refresh else find_legacy_summary(paths)
     if legacy_summary is not None:

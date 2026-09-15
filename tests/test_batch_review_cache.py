@@ -79,8 +79,38 @@ class BatchReviewCacheCliTests(unittest.TestCase):
         self.assertTrue(completed.stdout.strip(), completed.stderr)
         return json.loads(completed.stdout)
 
-    def init_batch(self, asins: list[str]) -> dict:
-        return self.run_batch("init", "--marketplace", "US", "--asins", *asins)
+    def init_batch(self, asins: list[str], *, limit: int | None = None) -> dict:
+        limit_args = () if limit is None else ("--limit", str(limit))
+        return self.run_batch("init", "--marketplace", "US", "--asins", *asins, *limit_args)
+
+    def seed_size_twenty_member(self, asin: str) -> Path:
+        identity = f"US-{asin}-stars-all_types-all-size-20"
+        collection = self.workspace / ".amazon-review-insights-cache" / "collections" / identity
+        page_dir = collection / "pages"
+        page_dir.mkdir(parents=True)
+        manifest = {
+            "schemaVersion": 2,
+            "identity": identity,
+            "request": {
+                "marketplace": "US",
+                "asin": asin,
+                "starList": [],
+                "typeList": [],
+                "requestPageSize": 20,
+            },
+            "status": "collecting",
+            "pendingRequest": None,
+            "createdAt": "2026-09-08T00:00:00+00:00",
+        }
+        page = {
+            "schemaVersion": 2,
+            "identity": identity,
+            "pagination": {"page": 1, "size": 20, "pages": 3, "total": 45},
+            "reviews": [{"content": f"legacy-{number}"} for number in range(1, 21)],
+        }
+        (collection / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        (page_dir / "page-000001.json").write_text(json.dumps(page), encoding="utf-8")
+        return collection
 
     def member_args(self, batch: dict, asin: str) -> tuple[str, ...]:
         return ("--batch-id", batch["batchId"], "--asin", asin)
@@ -144,6 +174,94 @@ class BatchReviewCacheCliTests(unittest.TestCase):
         self.assertEqual(first["batchId"], second["batchId"])
         self.assertEqual(first["displayOrder"], ["B000000002", "B000000001"])
         self.assertEqual(second["displayOrder"], ["B000000002", "B000000001"])
+
+    def test_new_batch_member_status_and_request_use_the_actual_fifty_record_page_size(self):
+        batch = self.init_batch(["B000000001", "B000000002"], limit=100)
+        status = self.run_batch("status", "--batch-id", batch["batchId"])
+        request = self.run_batch("next-request", *self.member_args(batch, "B000000001"))
+
+        self.assertEqual(batch["members"][0]["targetLimit"], 100)
+        self.assertEqual(status["members"][0]["targetLimit"], 100)
+        self.assertEqual(status["members"][0]["requestPageSize"], 50)
+        self.assertEqual(request["request"]["size"], 50)
+
+    def test_different_target_limit_batch_fails_before_sharing_a_live_member_cache(self):
+        first = self.init_batch(["B000000001", "B000000002"])
+
+        rejected = self.run_batch(
+            "init",
+            "--marketplace",
+            "US",
+            "--asins",
+            "B000000001",
+            "B000000002",
+            "--limit",
+            "100",
+            expected=2,
+        )
+        original = self.run_batch("status", "--batch-id", first["batchId"])
+
+        self.assertEqual(rejected["error"], "TARGET_LIMIT_CONFLICT")
+        self.assertEqual(rejected["requestedTargetLimit"], 100)
+        self.assertEqual(rejected["actualTargetLimit"], 2000)
+        self.assertIsNone(original["members"][0]["pendingPage"])
+
+    def test_target_conflict_preflight_does_not_create_an_earlier_new_member(self):
+        self.init_batch(["B000000002", "B000000003"])
+
+        rejected = self.run_batch(
+            "init",
+            "--marketplace",
+            "US",
+            "--asins",
+            "B000000001",
+            "B000000002",
+            "--limit",
+            "100",
+            expected=2,
+        )
+
+        self.assertEqual(rejected["error"], "TARGET_LIMIT_CONFLICT")
+        self.assertFalse(
+            (
+                self.workspace
+                / ".amazon-review-insights-cache"
+                / "collections"
+                / "US-B000000001-stars-all_types-all-size-50"
+            ).exists()
+        )
+
+    def test_matching_legacy_size_twenty_member_resumes_at_twenty(self):
+        self.seed_size_twenty_member("B000000001")
+        batch = self.init_batch(["B000000001", "B000000002"])
+
+        status = self.run_batch("status", "--batch-id", batch["batchId"])
+        request = self.run_batch("next-request", *self.member_args(batch, "B000000001"))
+
+        self.assertEqual(status["members"][0]["targetLimit"], 2000)
+        self.assertEqual(status["members"][0]["requestPageSize"], 20)
+        self.assertEqual(request["request"]["size"], 20)
+        self.assertEqual(request["request"]["page"], 2)
+
+    def test_incompatible_target_refuses_legacy_size_twenty_member_before_authorization(self):
+        legacy = self.seed_size_twenty_member("B000000001")
+
+        rejected = self.run_batch(
+            "init",
+            "--marketplace",
+            "US",
+            "--asins",
+            "B000000001",
+            "B000000002",
+            "--limit",
+            "100",
+            expected=2,
+        )
+        manifest = json.loads((legacy / "manifest.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(rejected["error"], "TARGET_LIMIT_CONFLICT")
+        self.assertEqual(rejected["actualTargetLimit"], 2000)
+        self.assertIsNone(manifest["pendingRequest"])
 
     def test_pending_authorization_blocks_only_the_same_member(self):
         batch = self.init_batch(["B000000001", "B000000002"])
