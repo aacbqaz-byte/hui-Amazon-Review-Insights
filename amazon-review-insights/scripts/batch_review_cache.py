@@ -266,6 +266,8 @@ def command_finalize_html(args: argparse.Namespace) -> dict[str, Any]:
         _, paths = member_paths(args.workspace, request, asin, "finalize-html")
         if html_path.is_relative_to(paths.collection.resolve()):
             raise review_cache.CacheError("HTML_PATH_UNSAFE", "Joint HTML must be saved outside member collection directories before cleanup")
+        if html_path == paths.receipt.resolve():
+            raise review_cache.CacheError("HTML_PATH_UNSAFE", "Joint HTML must not occupy a member receipt destination")
         require_member_target_compatibility(paths, request)
         bundle, _ = review_cache.export_bundle(paths)
         metadata = dict(bundle["metadata"])

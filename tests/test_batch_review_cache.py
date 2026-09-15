@@ -223,6 +223,26 @@ class BatchReviewCacheCliTests(unittest.TestCase):
         self.assert_live_caches_preserved(batch)
         self.assertTrue(html.is_file())
 
+    def test_finalize_rejects_html_at_member_receipt_destination(self):
+        batch, bundle = self.completed_batch()
+        receipts = self.workspace / ".amazon-review-insights-cache" / "receipts"
+        receipts.mkdir(parents=True)
+        html = receipts / f'review-receipt-{batch["members"][1]["identity"]}.json'
+        original_html = self.batch_html(bundle).read_bytes()
+        html.write_bytes(original_html)
+        pages = [Path(member["manifestPath"]).parent / "pages" / "page-000001.json"
+                 for member in batch["members"]]
+        original_pages = [page.read_bytes() for page in pages]
+
+        result = self.run_batch("finalize-html", "--batch-id", batch["batchId"], "--html", str(html), expected=2)
+
+        self.assertEqual(result["error"], "HTML_PATH_UNSAFE")
+        for member, page, original_page in zip(batch["members"], pages, original_pages):
+            self.assertTrue(Path(member["manifestPath"]).is_file())
+            self.assertEqual(page.read_bytes(), original_page)
+        self.assertEqual(list(receipts.glob("*.json")), [html])
+        self.assertEqual(html.read_bytes(), original_html)
+
     def test_batch_export_preserves_reviews_and_parallel_source_index(self):
         batch = self.init_batch(["B000000001", "B000000002"])
         self.complete_member(batch, "B000000001", [{"content": "one"}])
