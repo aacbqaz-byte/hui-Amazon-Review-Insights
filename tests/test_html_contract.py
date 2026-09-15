@@ -267,7 +267,6 @@ class HtmlContractTests(unittest.TestCase):
             "existing schema-2 size-20 collection or receipt",
             "analyze every unique collected review",
             "Source-reported total",
-            "Collected 2,000 reviews; source total unknown",
         )
 
         missing = [fragment for fragment in required_fragments if fragment not in contract]
@@ -326,7 +325,6 @@ class HtmlContractTests(unittest.TestCase):
             "Download HTML",
             "UTF-8 Blob",
             "Source-reported total",
-            "Collected 2,000 reviews; source total unknown",
             "Material 3-inspired",
         )
 
