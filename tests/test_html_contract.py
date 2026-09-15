@@ -1,4 +1,9 @@
 from pathlib import Path
+import importlib.util
+import json
+import re
+import subprocess
+import tempfile
 import unittest
 
 
@@ -9,6 +14,129 @@ REFERENCE = (
     / "built-in-analysis-prompt.md"
 )
 ENTRYPOINT = Path(__file__).resolve().parents[1] / "amazon-review-insights" / "SKILL.md"
+
+
+class MultiAsinRuntimeTests(unittest.TestCase):
+    """Execute the reference's real outline/runtime, not a separately invented report."""
+
+    def test_multi_asin_tabs_and_combined_voice_filter_preserve_source(self):
+        # Removing a tab binding, source-index join, filter reset, or pagination
+        # must change visible results or selection state and fail this test.
+        reference = REFERENCE.read_text(encoding="utf-8")
+        outline = re.search(r"```html\n(.*?)\n```", reference, re.S).group(1)
+        runtime = "\n".join(re.findall(r"```js\n(.*?)\n```", reference, re.S))
+        reviews = [
+            {"author": "Ana", "content": f"Travel café {i}", "star": 5, "verified": True,
+             "futureField": {"keep": "<original>"}}
+            for i in range(21)
+        ] + [
+            {"author": "Bo", "content": "Travel café weak seam", "star": 2, "verified": False},
+            {"author": "Cy", "content": "Travel café strong seam", "star": 5, "verified": True},
+        ]
+        sources = [{"marketplace": "US", "asin": "B000000001"}] * 21 + [
+            {"marketplace": "US", "asin": "B000000002"},
+            {"marketplace": "US", "asin": "B000000002"},
+        ]
+        def safe_json(value):
+            return json.dumps(value, ensure_ascii=False).replace("<", "\\u003c")
+
+        outline = outline.replace("{{complete_source_reviews_json}}", safe_json(reviews))
+        outline = outline.replace("{{complete_source_index_json}}", safe_json(sources))
+        outline = outline.replace("{{asin_options}}", '<option value="B000000001">B000000001</option>'
+                                  '<option value="B000000002">B000000002</option>')
+        # Populate the old outline's open navigation slot with the requested
+        # joint views; the validator must reject absent target panels in RED.
+        views = ["overview", "shared-intents", "shared-gaps", "asin-differences",
+                 "opportunities", "listing-a-plus", "design-brief", "voice", "method", "limitations"]
+        navigation = ''.join(
+            f'<button role="tab" data-view="{view}" aria-controls="{view}" '
+            f'aria-selected="{str(view == "overview").lower()}">{view}</button>'
+            for view in views
+        )
+        outline = outline.replace("{{navigation_tabs}}", navigation)
+        outline = outline.replace("{{language_and_download}}", '<button id="download-html">Download HTML</button>')
+        outline = re.sub(r"{{[^}]+}}", "", outline)
+        html = f"<!doctype html><html><title>Joint VOC</title><body>{outline}<script>{runtime}</script></body></html>"
+        validator_path = ENTRYPOINT.parent / "scripts" / "validate_report.py"
+        spec = importlib.util.spec_from_file_location("joint_report_validator", validator_path)
+        validator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(validator)
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "joint.html"
+            path.write_text(html, encoding="utf-8")
+            result = validator.validate_report(path)
+            self.assertEqual(result["tabCount"], 10, "Joint outline must expose ten working views")
+            parser, _, blocks = validator.read_report(path)
+        elements = list(parser.ids.values()) + [t for t in parser.tabs if not t.get("id")]
+        source_text = {b["attrs"]["id"]: b["content"] for b in blocks}
+        # Minimal DOM boundary: execute the shipped code using Node's EventTarget.
+        # Parsing, syntax validation, navigation/filter logic, and JSON stay real.
+        harness = r'''
+const assert = require('node:assert/strict');
+class Element extends EventTarget {
+  constructor(attrs = {}) { super(); this.attrs = {...attrs}; this.id = attrs.id;
+    this.hidden = 'hidden' in attrs; this.value = attrs.value || ''; this.checked = false;
+    this.children = []; this.textContent = ''; this.disabled = false; }
+  getAttribute(key) { return this.attrs[key]; }
+  setAttribute(key, value) { this.attrs[key] = value; }
+  append(...nodes) { this.children.push(...nodes); }
+  replaceChildren(...nodes) { this.children = nodes; this.textContent = ''; }
+  click() { if (!this.disabled) this.dispatchEvent(new Event('click')); }
+}
+const elements = INPUT.elements.map(attrs => new Element(attrs));
+const byId = id => elements.find(e => e.id === id);
+for (const [id, value] of Object.entries(INPUT.sourceText)) byId(id).textContent = value;
+const document = {
+  getElementById: byId, createElement: () => new Element(),
+  querySelectorAll: selector => elements.filter(e =>
+    selector.includes('tabpanel') ? e.attrs.role === 'tabpanel' :
+    selector.includes('role="tab"') ? e.attrs.role === 'tab' :
+    selector.includes('voice-star') ? e.attrs.name === 'voice-star' : false),
+  title: 'Joint VOC', documentElement: {outerHTML: ''}
+};
+const history = {replaceState() {}};
+const before = byId('review-data').textContent;
+RUNTIME
+const text = el => el.textContent + el.children.map(text).join(' ');
+for (const id of ['shared-intents', 'shared-gaps', 'asin-differences']) {
+  elements.find(e => e.attrs.role === 'tab' && e.attrs['aria-controls'] === id).click();
+  assert.deepEqual(elements.filter(e => e.attrs.role === 'tabpanel' && !e.hidden).map(e => e.id), [id]);
+  assert.equal(elements.filter(e => e.attrs['aria-selected'] === 'true').length, 1);
+}
+const list = byId('voice-list');
+assert.equal(list.children.length, 20);
+byId('voice-next').click();
+assert.equal(list.children.length, 3);
+const change = (id, value, event = 'change') => {
+  byId(id).value = value; byId(id).dispatchEvent(new Event(event));
+};
+assert.ok(byId('voice-asin').getAttribute('aria-label'));
+change('voice-asin', 'B000000002');
+assert.equal(list.children.length, 2); // Also proves page reset from page two.
+assert.match(text(list), /weak seam/); assert.doesNotMatch(text(list), /Travel café 0/);
+change('voice-query', 'cafe travl', 'input'); // Accent + one-edit token search.
+assert.equal(list.children.length, 2);
+change('voice-verified', 'true');
+assert.equal(list.children.length, 1); assert.match(text(list), /strong seam/);
+byId('voice-star-2').checked = true;
+byId('voice-star-2').dispatchEvent(new Event('change'));
+assert.equal(list.children.length, 0);
+byId('voice-star-5').checked = true;
+byId('voice-star-5').dispatchEvent(new Event('change'));
+assert.equal(list.children.length, 1); // Multi-select OR, combined filters AND.
+change('voice-verified', '');
+assert.equal(list.children.length, 2);
+change('voice-asin', '');
+assert.equal(list.children.length, 20);
+assert.equal(byId('review-data').textContent, before);
+assert.deepEqual(JSON.parse(before), INPUT.reviews);
+assert.deepEqual(JSON.parse(byId('review-source-index').textContent), INPUT.sources);
+'''
+        harness = harness.replace("RUNTIME", runtime)
+        harness = "const INPUT = " + json.dumps({"elements": elements, "sourceText": source_text,
+            "reviews": reviews, "sources": sources}) + ";\n" + harness
+        completed = subprocess.run(["node", "-"], input=harness, text=True, encoding="utf-8", capture_output=True)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
 
 class HtmlContractTests(unittest.TestCase):
