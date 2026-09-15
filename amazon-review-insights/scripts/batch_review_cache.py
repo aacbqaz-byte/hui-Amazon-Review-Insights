@@ -115,8 +115,16 @@ def member_paths(workspace: str, request: dict[str, Any], asin: str, command: st
 
 def require_member_target_compatibility(paths: review_cache.CollectionPaths, request: dict[str, Any]) -> None:
     if paths.manifest.exists():
-        manifest, _ = review_cache.reconcile(paths)
+        manifest, _ = review_cache.reconcile(paths, persist=False)
         review_cache.require_target_limit_compatibility(manifest, request["targetLimit"])
+    elif paths.receipt.exists():
+        receipt, reviews = review_cache.read_valid_receipt(paths)
+        metadata = receipt["metadata"]
+        if "targetLimit" in metadata:
+            review_cache.require_target_limit_compatibility(
+                {**metadata, "status": "receipt-backed", "uniqueCount": len(reviews)},
+                request["targetLimit"],
+            )
 
 
 def member_state(workspace: str, request: dict[str, Any], asin: str) -> dict[str, Any]:
@@ -246,6 +254,9 @@ def command_finalize_html(args: argparse.Namespace) -> dict[str, Any]:
     manifest = load_batch(args.workspace, args.batch_id)
     request = manifest["request"]
     html_path = Path(args.html).expanduser().resolve()
+    batch_receipt_path = batch_root(args.workspace).parent / "receipts" / f'batch-receipt-{manifest["batchId"]}.json'
+    if html_path == batch_receipt_path.resolve():
+        raise review_cache.CacheError("HTML_PATH_UNSAFE", "Joint HTML must not occupy the batch receipt destination")
     try:
         review_cache.validate_report(html_path)
     except review_cache.ReportValidationError as exc:
@@ -294,9 +305,25 @@ def command_finalize_html(args: argparse.Namespace) -> dict[str, Any]:
         }
         prepared.append((paths, receipt))
 
+    batch_receipt = {
+        "schemaVersion": BATCH_SCHEMA_VERSION,
+        "batchId": manifest["batchId"],
+        "request": request,
+        "status": "receipt-backed",
+        "htmlPath": str(html_path),
+        "htmlSha256": html_hash,
+        "reviewCount": len(reviews),
+        "sourceIndexSha256": review_cache.sha256_text(canonical_json(source_index)),
+        "members": [
+            {key: receipt[key] for key in ("identity", "request", "reviewCount", "datasetSha256")}
+            for _, receipt in prepared
+        ],
+        "createdAt": review_cache.utc_now(),
+    }
     # All members must validate before any receipt can authorize recovery.
     for paths, receipt in prepared:
         review_cache.atomic_write_json(paths.receipt, receipt)
+    review_cache.atomic_write_json(batch_receipt_path, batch_receipt)
     # A write failure above leaves every live collection available for retry.
     for paths, _ in prepared:
         if paths.collection.exists():
@@ -308,6 +335,7 @@ def command_finalize_html(args: argparse.Namespace) -> dict[str, Any]:
         "batchId": manifest["batchId"],
         "htmlPath": str(html_path),
         "reviewCount": len(reviews),
+        "batchReceiptPath": str(batch_receipt_path),
         "receiptPaths": [str(paths.receipt) for paths, _ in prepared],
     }
 

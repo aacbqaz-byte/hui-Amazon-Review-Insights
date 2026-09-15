@@ -300,6 +300,33 @@ class ReviewCacheCliTests(unittest.TestCase):
         self.assertEqual(resumed["targetLimit"], 2000)
         self.assertEqual(status["targetLimit"], 2000)
 
+    def test_status_reconciles_counts_without_writing_collection_files(self):
+        for records in ([review(1), review(1), review(2)], []):
+            with self.subTest(records=len(records)):
+                self.run_cli("init", "--refresh")
+                initialized = self.run_cli("status")
+                collection = Path(initialized["collectionPath"])
+                page = {
+                    "schemaVersion": 2,
+                    "identity": initialized["identity"],
+                    "pagination": {"page": 1, "size": 50, "pages": 1, "total": len(records)},
+                    "reviews": records,
+                }
+                (collection / "pages" / "page-000001.json").write_text(json.dumps(page), encoding="utf-8")
+                (collection / "reviews.jsonl").write_text("stale derived data\n", encoding="utf-8")
+                before = {path: (path.read_bytes(), path.stat().st_mtime_ns)
+                          for path in collection.rglob("*") if path.is_file()}
+
+                status = self.run_cli("status")
+
+                self.assertEqual(status["status"], "complete")
+                self.assertEqual(status["rawCount"], len(records))
+                self.assertEqual(status["uniqueCount"], 2 if records else 0)
+                self.assertEqual(status["duplicateCount"], 1 if records else 0)
+                after = {path: (path.read_bytes(), path.stat().st_mtime_ns)
+                         for path in collection.rglob("*") if path.is_file()}
+                self.assertEqual(after, before)
+
     def test_changed_server_page_size_is_rejected_without_advancing(self):
         self.initialize()
         self.run_cli("next-request")
@@ -406,6 +433,46 @@ class ReviewCacheCliTests(unittest.TestCase):
         recovered = self.run_cli("export-json", "--output", str(recovered_path))
         self.assertEqual(recovered["source"], "verified-html")
         self.assertEqual(json.loads(recovered_path.read_text(encoding="utf-8"))["reviews"], originals)
+
+    def test_custom_limit_and_page_size_survive_single_html_finalization(self):
+        originals = [review(1), review(2)]
+        self.run_cli("init", "--limit", "100")
+        self.run_cli("next-request")
+        saved = self.save(response(1, 1, 2, originals))
+        html = self.workspace / "custom-limit.html"
+        html.write_text(interactive_report_html(originals), encoding="utf-8")
+
+        finalized = self.run_cli("finalize-html", "--html", str(html))
+        self.assertFalse(Path(saved["collectionPath"]).exists())
+        output = self.workspace / "custom-limit-recovered.json"
+        self.run_cli("export-json", "--output", str(output))
+        recovered = json.loads(output.read_text(encoding="utf-8"))
+        receipt = json.loads(Path(finalized["receiptPath"]).read_text(encoding="utf-8"))
+
+        self.assertEqual(recovered["reviews"], originals)
+        self.assertEqual(recovered["metadata"].get("targetLimit"), 100)
+        self.assertEqual(recovered["metadata"].get("requestPageSize"), 50)
+        self.assertEqual(receipt["metadata"].get("targetLimit"), 100)
+        self.assertEqual(receipt["metadata"].get("requestPageSize"), 50)
+
+    def test_legacy_receipt_without_optional_limit_metadata_remains_readable(self):
+        originals = [review(1), review(2)]
+        self.seed_size_twenty_collection(originals, pages=1, total=2)
+        html = self.workspace / "legacy-metadata.html"
+        html.write_text(interactive_report_html(originals), encoding="utf-8")
+        finalized = self.run_cli("finalize-html", "--html", str(html))
+        receipt_path = Path(finalized["receiptPath"])
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        self.assertEqual(receipt["metadata"].get("requestPageSize"), 20)
+        receipt["metadata"].pop("targetLimit", None)
+        receipt["metadata"].pop("requestPageSize", None)
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+        output = self.workspace / "legacy-metadata-recovered.json"
+        exported = self.run_cli("export-json", "--output", str(output))
+
+        self.assertEqual(exported["source"], "verified-html")
+        self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["reviews"], originals)
 
     def test_invalid_report_javascript_preserves_the_complete_review_cache(self):
         self.initialize()

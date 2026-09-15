@@ -230,7 +230,12 @@ def validate_manifest(manifest: dict[str, Any], paths: CollectionPaths) -> None:
 
 def require_target_limit_compatibility(manifest: dict[str, Any], requested_limit: int) -> int:
     actual_limit = validate_collection_limit(manifest.get("targetLimit", DEFAULT_COLLECTION_LIMIT))
-    if requested_limit != actual_limit:
+    reusable_terminal = (
+        requested_limit < actual_limit
+        and manifest.get("status") in TERMINAL_STATES | {"receipt-backed"}
+        and manifest.get("uniqueCount", 0) >= requested_limit
+    )
+    if requested_limit != actual_limit and not reusable_terminal:
         raise CacheError(
             "TARGET_LIMIT_CONFLICT",
             "The existing collection uses a different target limit; do not share or authorize it automatically",
@@ -279,7 +284,7 @@ def validate_page_file(page_value: dict[str, Any], paths: CollectionPaths, expec
         raise CacheError("CACHE_CORRUPT", f"Page {expected_page} has invalid reviews")
 
 
-def reconcile(paths: CollectionPaths) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def reconcile(paths: CollectionPaths, *, persist: bool = True) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     manifest = load_json(paths.manifest)
     if not isinstance(manifest, dict):
         raise CacheError("CACHE_CORRUPT", "Manifest must be a JSON object")
@@ -322,11 +327,12 @@ def reconcile(paths: CollectionPaths) -> tuple[dict[str, Any], list[dict[str, An
             status = "complete"
             stop_reason = "empty-page" if page_count == 0 else "short-page"
 
-    jsonl = "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in unique)
-    if unique:
-        atomic_write_text(paths.reviews, jsonl)
-    elif paths.reviews.exists():
-        paths.reviews.unlink()
+    if persist:
+        jsonl = "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in unique)
+        if unique:
+            atomic_write_text(paths.reviews, jsonl)
+        elif paths.reviews.exists():
+            paths.reviews.unlink()
 
     pending_request = manifest.get("pendingRequest")
     if isinstance(pending_request, dict):
@@ -356,7 +362,8 @@ def reconcile(paths: CollectionPaths) -> tuple[dict[str, Any], list[dict[str, An
             "updatedAt": utc_now(),
         }
     )
-    atomic_write_json(paths.manifest, manifest)
+    if persist:
+        atomic_write_json(paths.manifest, manifest)
     return manifest, unique
 
 
@@ -469,8 +476,10 @@ def command_init(args: argparse.Namespace, paths: CollectionPaths) -> dict[str, 
             "uniqueCount": len(reviews),
         }
     if paths.manifest.exists():
-        manifest, _ = reconcile(paths)
+        manifest, _ = reconcile(paths, persist=False)
         require_target_limit_compatibility(manifest, target_limit)
+        if manifest["status"] == "collecting":
+            manifest, _ = reconcile(paths)
         return public_state(manifest, paths, action="resume_existing")
     legacy_summary = None if args.refresh else find_legacy_summary(paths)
     if legacy_summary is not None:
@@ -489,7 +498,7 @@ def command_init(args: argparse.Namespace, paths: CollectionPaths) -> dict[str, 
 
 def command_status(args: argparse.Namespace, paths: CollectionPaths) -> dict[str, Any]:
     if paths.manifest.exists():
-        manifest, _ = reconcile(paths)
+        manifest, _ = reconcile(paths, persist=False)
         return public_state(manifest, paths, action="status")
     if paths.receipt.exists():
         receipt, reviews = read_valid_receipt(paths)
@@ -517,7 +526,7 @@ def command_next_request(args: argparse.Namespace, paths: CollectionPaths) -> di
             htmlPath=receipt["htmlPath"],
             uniqueCount=len(reviews),
         )
-    manifest, _ = reconcile(paths)
+    manifest, _ = reconcile(paths, persist=False)
     if manifest["status"] != "collecting":
         raise CacheError(
             "MCP_CALL_BLOCKED",
@@ -538,6 +547,7 @@ def command_next_request(args: argparse.Namespace, paths: CollectionPaths) -> di
             pendingPage=pending.get("page"),
             authorizedAt=pending.get("authorizedAt"),
         )
+    manifest, _ = reconcile(paths)
     request: dict[str, Any] = {
         "marketplace": paths.marketplace,
         "asin": paths.asin,
@@ -655,7 +665,7 @@ def command_record_error(args: argparse.Namespace, paths: CollectionPaths) -> di
 
 def export_bundle(paths: CollectionPaths) -> tuple[dict[str, Any], str]:
     if paths.manifest.exists():
-        manifest, reviews = reconcile(paths)
+        manifest, reviews = reconcile(paths, persist=False)
         if manifest["status"] in {"collecting", "blocked-empty"}:
             raise CacheError("EXPORT_BLOCKED", f"Cannot export collection in status {manifest['status']}")
         metadata = {
@@ -714,6 +724,7 @@ def command_finalize_html(args: argparse.Namespace, paths: CollectionPaths) -> d
     metadata = {
         "identity": paths.identity,
         **manifest["request"],
+        "targetLimit": manifest["targetLimit"],
         "sourcePages": manifest["sourcePages"],
         "sourceTotal": manifest["sourceTotal"],
         "rawCount": manifest["rawCount"],
