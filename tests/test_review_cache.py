@@ -52,6 +52,18 @@ def response(page: int, pages: int, total: int, records: list[dict], size: int =
     }
 
 
+def mcp_envelope(payload: dict) -> dict:
+    return {
+        "content": [
+            {
+                "type": "text",
+                "text": json.dumps(payload, ensure_ascii=False),
+            }
+        ],
+        "isError": False,
+    }
+
+
 def interactive_report_html(reviews: list[dict], runtime_suffix: str = "") -> str:
     payload = json.dumps(reviews, ensure_ascii=False).replace("<", "\\u003c")
     runtime = """
@@ -350,6 +362,92 @@ class ReviewCacheCliTests(unittest.TestCase):
         )
         self.assertEqual(failure["error"], "PAGE_RECORD_OVERFLOW")
         self.assertEqual(self.run_cli("status")["nextPage"], 1)
+
+    def test_raw_mcp_envelope_with_items_is_saved_losslessly_without_manual_recovery(self):
+        self.initialize()
+        self.run_cli("next-request")
+        original = review(1)
+        original["content"] = None
+        payload = response(1, 1, 1, [])
+        payload["data"].pop("content")
+        payload["data"]["items"] = [original]
+
+        saved = self.save(mcp_envelope(payload), "raw-mcp-envelope.json")
+
+        self.assertEqual(saved["status"], "complete")
+        page = json.loads(
+            (Path(saved["collectionPath"]) / "pages" / "page-000001.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(page["reviews"], [original])
+        self.assertNotIn("items", page["metadata"])
+        self.assertNotIn("content", page["metadata"])
+
+    def test_direct_sellersprite_response_with_items_remains_supported(self):
+        self.initialize()
+        self.run_cli("next-request")
+        payload = response(1, 1, 1, [])
+        payload["data"].pop("content")
+        payload["data"]["items"] = [review(1)]
+
+        saved = self.save(payload, "direct-items-response.json")
+
+        self.assertEqual(saved["status"], "complete")
+        self.assertEqual(saved["uniqueCount"], 1)
+
+    def test_conflicting_content_and_items_fail_closed_without_consuming_pending_request(self):
+        self.initialize()
+        self.run_cli("next-request")
+        payload = response(1, 1, 1, [review(1)])
+        payload["data"]["items"] = [review(2)]
+
+        rejected = self.save(mcp_envelope(payload), "ambiguous-review-arrays.json", expected=2)
+
+        self.assertEqual(rejected["error"], "AMBIGUOUS_REVIEW_ARRAY")
+        status = self.run_cli("status")
+        self.assertEqual(status["status"], "collecting")
+        self.assertEqual(status["pendingPage"], 1)
+        self.assertEqual(status["savedPages"], [])
+
+    def test_plain_text_mcp_tool_error_is_recorded_without_repeating_authorized_page(self):
+        self.initialize()
+        self.run_cli("next-request")
+        error_file = self.write_response(
+            "tool-error.json",
+            {
+                "content": [{"type": "text", "text": "asin 不能为空"}],
+                "isError": True,
+            },
+        )
+
+        recorded = self.run_cli("record-error", "--response-file", str(error_file))
+
+        self.assertEqual(recorded["status"], "blocked-empty")
+        self.assertEqual(recorded["failure"], {"code": "MCP_TOOL_ERROR", "message": "asin 不能为空"})
+        blocked = self.run_cli("next-request", expected=2)
+        self.assertEqual(blocked["action"], "do_not_call_mcp")
+        self.assertEqual(blocked["status"], "blocked-empty")
+
+    def test_wrapped_visit_limit_preserves_saved_reviews_and_exact_error(self):
+        self.initialize()
+        self.run_cli("next-request")
+        first = response(1, 2, 35, [])
+        first["data"].pop("content")
+        first["data"]["items"] = [review(i) for i in range(1, 21)]
+        self.save(mcp_envelope(first), "wrapped-page.json")
+        self.run_cli("next-request")
+        error_file = self.write_response(
+            "wrapped-visit-limit.json",
+            mcp_envelope({"code": "ERROR_VISIT_MAX", "message": "接口访问次数已达上限"}),
+        )
+
+        recorded = self.run_cli("record-error", "--response-file", str(error_file))
+
+        self.assertEqual(recorded["status"], "partial")
+        self.assertEqual(recorded["uniqueCount"], 20)
+        self.assertEqual(
+            recorded["failure"],
+            {"code": "ERROR_VISIT_MAX", "message": "接口访问次数已达上限"},
+        )
 
     def test_identical_page_is_idempotent_but_conflicting_page_is_blocked(self):
         self.initialize()

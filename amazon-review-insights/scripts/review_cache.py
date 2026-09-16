@@ -571,6 +571,91 @@ def command_next_request(args: argparse.Namespace, paths: CollectionPaths) -> di
     return public_state(manifest, paths, action="call_mcp", request=request)
 
 
+def normalize_mcp_response(response: dict[str, Any]) -> dict[str, Any]:
+    """Return the SellerSprite payload from either a direct response or MCP tool envelope."""
+    if isinstance(response.get("code"), str):
+        return response
+
+    blocks = response.get("content")
+    if not isinstance(blocks, list):
+        raise CacheError(
+            "INVALID_MCP_RESPONSE",
+            "MCP response must be a SellerSprite object or a tool envelope with content blocks",
+        )
+
+    texts = [
+        block["text"]
+        for block in blocks
+        if isinstance(block, dict)
+        and block.get("type") == "text"
+        and isinstance(block.get("text"), str)
+        and block["text"].strip()
+    ]
+    payloads: list[dict[str, Any]] = []
+    for value in texts:
+        try:
+            candidate = json.loads(value)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict) and isinstance(candidate.get("code"), str):
+            payloads.append(candidate)
+
+    if len(payloads) > 1:
+        raise CacheError(
+            "AMBIGUOUS_MCP_ENVELOPE",
+            "MCP tool envelope contains more than one SellerSprite response payload",
+        )
+    if payloads:
+        payload = payloads[0]
+        if response.get("isError") is True and payload.get("code") == "OK":
+            raise CacheError(
+                "INVALID_MCP_RESPONSE",
+                "MCP tool envelope marks an OK SellerSprite payload as an error",
+            )
+        return payload
+
+    if response.get("isError") is True:
+        message = "\n".join(text.strip() for text in texts if text.strip())
+        return {
+            "code": "MCP_TOOL_ERROR",
+            "message": message or "MCP tool returned an unspecified error",
+        }
+
+    raise CacheError(
+        "INVALID_MCP_RESPONSE",
+        "MCP tool envelope does not contain a SellerSprite JSON response",
+    )
+
+
+def review_records(data: dict[str, Any]) -> list[dict[str, Any]]:
+    has_content = "content" in data
+    has_items = "items" in data
+    if has_content and has_items:
+        content = data["content"]
+        items = data["items"]
+        if canonical_json(content) != canonical_json(items):
+            raise CacheError(
+                "AMBIGUOUS_REVIEW_ARRAY",
+                "data.content and data.items contain different review arrays",
+            )
+        records = content
+    elif has_items:
+        records = data["items"]
+    elif has_content:
+        records = data["content"]
+    else:
+        raise CacheError(
+            "INVALID_MCP_RESPONSE",
+            "MCP response data must contain a review array in data.items or data.content",
+        )
+    if not isinstance(records, list) or any(not isinstance(item, dict) for item in records):
+        raise CacheError(
+            "INVALID_MCP_RESPONSE",
+            "The SellerSprite review field must be an array of review objects",
+        )
+    return records
+
+
 def build_page_value(response: dict[str, Any], paths: CollectionPaths) -> dict[str, Any]:
     if response.get("code") != "OK":
         raise CacheError("MCP_RESPONSE_ERROR", "Successful pages require code=OK; use record-error for failures")
@@ -579,19 +664,17 @@ def build_page_value(response: dict[str, Any], paths: CollectionPaths) -> dict[s
         raise CacheError("INVALID_MCP_RESPONSE", "MCP response data must be an object")
     current_page = data.get("page")
     size = data.get("size")
-    records = data.get("content")
+    records = review_records(data)
     if not isinstance(current_page, int) or current_page < 1:
         raise CacheError("INVALID_MCP_RESPONSE", "data.page must be a positive integer")
     if size != paths.page_size:
         raise CacheError("PAGE_SIZE_MISMATCH", f"Expected data.size={paths.page_size}, received {size}")
-    if not isinstance(records, list) or any(not isinstance(item, dict) for item in records):
-        raise CacheError("INVALID_MCP_RESPONSE", "data.content must be an array of review objects")
     if len(records) > paths.page_size:
         raise CacheError(
             "PAGE_RECORD_OVERFLOW",
             f"Page contains {len(records)} reviews but declared page size is {paths.page_size}",
         )
-    metadata = {key: value for key, value in data.items() if key != "content"}
+    metadata = {key: value for key, value in data.items() if key not in {"content", "items"}}
     return {
         "schemaVersion": SCHEMA_VERSION,
         "identity": paths.identity,
@@ -614,9 +697,10 @@ def comparable_page(value: dict[str, Any]) -> dict[str, Any]:
 
 def command_save_page(args: argparse.Namespace, paths: CollectionPaths) -> dict[str, Any]:
     manifest, _ = reconcile(paths)
-    response_value = load_json(Path(args.response_file))
-    if not isinstance(response_value, dict):
+    raw_response = load_json(Path(args.response_file))
+    if not isinstance(raw_response, dict):
         raise CacheError("INVALID_MCP_RESPONSE", "MCP response must be a JSON object")
+    response_value = normalize_mcp_response(raw_response)
     page_value = build_page_value(response_value, paths)
     current_page = page_value["pagination"]["page"]
     destination = page_path(paths, current_page)
@@ -650,9 +734,10 @@ def command_record_error(args: argparse.Namespace, paths: CollectionPaths) -> di
         raise CacheError("MCP_CALL_BLOCKED", f"Cannot record a new MCP error while status is {manifest['status']}")
     if not isinstance(manifest.get("pendingRequest"), dict):
         raise CacheError("UNAUTHORIZED_ERROR", "No durable MCP request authorization is pending")
-    response_value = load_json(Path(args.response_file))
-    if not isinstance(response_value, dict):
+    raw_response = load_json(Path(args.response_file))
+    if not isinstance(raw_response, dict):
         raise CacheError("INVALID_MCP_RESPONSE", "MCP error response must be a JSON object")
+    response_value = normalize_mcp_response(raw_response)
     code = response_value.get("code")
     message = response_value.get("message")
     if not isinstance(code, str) or not code or code == "OK":

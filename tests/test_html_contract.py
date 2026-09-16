@@ -297,6 +297,32 @@ class HtmlContractTests(unittest.TestCase):
         missing = [fragment for fragment in required_fragments if fragment not in contract]
         self.assertEqual(missing, [], f"Missing executable cache protocol: {missing}")
 
+    def test_raw_mcp_checkpoint_contract_forbids_agent_side_response_rewriting(self):
+        contract = ENTRYPOINT.read_text(encoding="utf-8")
+        required_fragments = (
+            "top-level MCP tool arguments",
+            "never nest them under a property named `request`",
+            "Do not use Base64 or `btoa`",
+            "complete unmodified MCP tool result",
+            "keep the temporary response file until the checkpoint succeeds",
+        )
+
+        missing = [fragment for fragment in required_fragments if fragment not in contract]
+        self.assertEqual(missing, [], f"Missing raw MCP checkpoint safeguards: {missing}")
+
+    def test_joint_findings_require_resolvable_asin_and_voice_evidence(self):
+        contract = REFERENCE.read_text(encoding="utf-8")
+        required_fragments = (
+            "resolvable evidence citations",
+            "`VOC #<one-based index>`",
+            "same VOC identifier",
+            "ASIN source",
+            "original-language verbatim excerpt",
+        )
+
+        missing = [fragment for fragment in required_fragments if fragment not in contract]
+        self.assertEqual(missing, [], f"Missing traceable joint-finding evidence contract: {missing}")
+
     def test_dashboard_contract_preserves_offline_navigation_and_full_voice_evidence(self):
         contract = REFERENCE.read_text(encoding="utf-8")
 
