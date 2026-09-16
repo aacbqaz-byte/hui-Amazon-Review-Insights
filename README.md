@@ -6,13 +6,13 @@
 
 ## 能力
 
-- 调用 `sellersprite-mcp` 的 `review` 能力，新采集任务按每页 50 条自动翻页采集评论。
+- 调用 `sellersprite-mcp` 的 `review` 能力，新采集任务按每页 20 条自动翻页采集评论。
 - 强制要求 1–5 个唯一 ASIN 和明确的 `marketplace`；一个批次使用同一站点、筛选条件和每个 ASIN 的采集上限。
 - 默认每个 ASIN 最多采集 2,000 条；可用 `--limit` 指定 50–2,000 之间的 50 的整数倍。不足上限时采集接口可返回的全部评论，不做比例抽样。
 - 每页 MCP 结果立即完整写入本地事务式缓存；上下文压缩或任务中断后只从下一未保存页继续。
 - 完成、部分失败或已有已验证 HTML 时禁止自动重复调用 MCP。
-- 已存在的每页 20 条旧缓存或 HTML 回执会继续复用；不会为了升级到 50 条而重新采集。
-- 所有进度与报告使用持久化 `rawCount`、`uniqueCount`、`targetLimit`、`requestPageSize`，分别显示实际采集数、去重数、请求目标和页大小，不能把默认 2,000 或目标值当成实际采集数。旧版每页 20 条可能保留完整末页而超过目标，例如实际 560 条、去重 548 条、目标 550 条、页大小 20；报告保留这些实际值并说明超出原因。
+- 已存在的每页 50 条旧缓存或 HTML 回执会继续复用；不会为了改成 20 条而重新采集。
+- 所有进度与报告使用持久化 `rawCount`、`uniqueCount`、`targetLimit`、`requestPageSize`，分别显示实际采集数、去重数、请求目标和页大小，不能把默认 2,000 或目标值当成实际采集数。若自定义目标不是 20 的整数倍，会保留完整末页，例如实际 560 条、去重 548 条、目标 550 条、页大小 20；报告保留这些实际值并说明超出原因。
 - 支持内置提示词或用户上传的 `.md` / `.txt` 分析提示词；自定义提示词只能改变分析视角。
 - 输出无外部依赖的离线 HTML；嵌入全部评论，支持导航、中英文切换，以及 ASIN、模糊搜索、多选星级、已验证购买状态的组合筛选，每页显示 20 条用户原声。
 - 联合报告包含十个视图：总览、共性意图、共性缺口、ASIN 差异、机会矩阵、Listing 与 A+、设计 Brief、用户原声、数据与方法、限制说明。单 ASIN 保留八视图与原有工作流。
@@ -85,9 +85,9 @@ python <skill-dir>/scripts/batch_review_cache.py status --workspace <workspace> 
 python <skill-dir>/scripts/batch_review_cache.py next-request --workspace <workspace> --batch-id <batchId> --asin B000000001
 ```
 
-只在 `action: "call_mcp"` 时将返回的 `request` 原样传给 MCP。每次响应立即完整保存为临时 JSON，再运行对应成员的 `save-page --response-file <file>`（成功）或 `record-error --response-file <file>`（非 OK）；这些命令同样必须带 `--workspace`、`--batch-id`、`--asin`。新采集一律每页 50 条；只有匹配的既存 size-20 状态可以继续用 20，不能为升级页大小重爬。
+只在 `action: "call_mcp"` 时将返回的 `request` 原样传给 MCP。每次响应立即完整保存为临时 JSON，再运行对应成员的 `save-page --response-file <file>`（成功）或 `record-error --response-file <file>`（非 OK）；这些命令同样必须带 `--workspace`、`--batch-id`、`--asin`。新采集一律每页 20 条；只有匹配的既存 size-50 状态可以继续用 50，不能为转换页大小重爬。
 
-批次清单位于 `.amazon-review-insights-cache/batches/<batch-id>/manifest.json`；成员评论与分页状态位于 `collections/<identity>/`。上下文压缩或中断后先读取清单并运行 `status`，再由每个成员的 `next-request` 授权。`REQUEST_PENDING` 只能提交已获得的响应，响应丢失则停止，禁止重复请求该页。默认顺序执行；宿主支持并行时，每个 ASIN 必须只有一个写入者，导出/验证须等所有写入者结束。默认上限下，2–5 个全新 ASIN 最多需要 80–200 次分页调用；实际时间取决于返回页数、接口延迟和本地分析，已有缓存可减少调用。
+批次清单位于 `.amazon-review-insights-cache/batches/<batch-id>/manifest.json`；成员评论与分页状态位于 `collections/<identity>/`。上下文压缩或中断后先读取清单并运行 `status`，再由每个成员的 `next-request` 授权。`REQUEST_PENDING` 只能提交已获得的响应，响应丢失则停止，禁止重复请求该页。默认顺序执行；宿主支持并行时，每个 ASIN 必须只有一个写入者，导出/验证须等所有写入者结束。默认上限下，2–5 个全新 ASIN 最多需要 200–500 次分页调用；实际时间取决于返回页数、接口延迟和本地分析，已有缓存可减少调用。
 
 成员部分失败时保留精确错误码/消息及已采集、去重后条数，由用户决定是否基于部分数据输出。`collecting` 或 `blocked-empty` 成员会阻止整个批次导出，CLI 没有“跳过成员”参数；若用户选择缩小比较范围，再用选定成员建立新批次并明确披露原始失败和范围变更。`partial` 不能自动重试；只有用户明确要求刷新，才调用单成员 `review_cache.py init --refresh`（批次 init 没有 refresh 参数）。
 

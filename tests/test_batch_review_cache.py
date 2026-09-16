@@ -22,7 +22,7 @@ def response(page: int, records: list[dict]) -> dict:
         "data": {
             "pages": 1,
             "page": page,
-            "size": 50,
+            "size": 20,
             "total": len(records),
             "content": records,
         },
@@ -86,8 +86,8 @@ class BatchReviewCacheCliTests(unittest.TestCase):
         limit_args = () if limit is None else ("--limit", str(limit))
         return self.run_batch("init", "--marketplace", "US", "--asins", *asins, *limit_args)
 
-    def seed_size_twenty_member(self, asin: str) -> Path:
-        identity = f"US-{asin}-stars-all_types-all-size-20"
+    def seed_size_fifty_member(self, asin: str) -> Path:
+        identity = f"US-{asin}-stars-all_types-all-size-50"
         collection = self.workspace / ".amazon-review-insights-cache" / "collections" / identity
         page_dir = collection / "pages"
         page_dir.mkdir(parents=True)
@@ -99,7 +99,7 @@ class BatchReviewCacheCliTests(unittest.TestCase):
                 "asin": asin,
                 "starList": [],
                 "typeList": [],
-                "requestPageSize": 20,
+                "requestPageSize": 50,
             },
             "status": "collecting",
             "pendingRequest": None,
@@ -108,8 +108,8 @@ class BatchReviewCacheCliTests(unittest.TestCase):
         page = {
             "schemaVersion": 2,
             "identity": identity,
-            "pagination": {"page": 1, "size": 20, "pages": 3, "total": 45},
-            "reviews": [{"content": f"legacy-{number}"} for number in range(1, 21)],
+            "pagination": {"page": 1, "size": 50, "pages": 3, "total": 125},
+            "reviews": [{"content": f"legacy-{number}"} for number in range(1, 51)],
         }
         (collection / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
         (page_dir / "page-000001.json").write_text(json.dumps(page), encoding="utf-8")
@@ -148,13 +148,13 @@ class BatchReviewCacheCliTests(unittest.TestCase):
         initialized = self.run_single("init", asin, "--limit", str(target_limit))
         collection = Path(initialized["collectionPath"])
         records = [{"content": f"{asin}-review-{number}"} for number in range(count)]
-        for offset in range(0, count, 50):
-            page_number = offset // 50 + 1
+        for offset in range(0, count, 20):
+            page_number = offset // 20 + 1
             page = {
                 "schemaVersion": 2,
                 "identity": initialized["identity"],
-                "pagination": {"page": page_number, "size": 50, "pages": source_pages, "total": source_pages * 50},
-                "reviews": records[offset:offset + 50],
+                "pagination": {"page": page_number, "size": 20, "pages": source_pages, "total": source_pages * 20},
+                "reviews": records[offset:offset + 20],
             }
             (collection / "pages" / f"page-{page_number:06d}.json").write_text(json.dumps(page), encoding="utf-8")
         return collection, records
@@ -224,10 +224,10 @@ class BatchReviewCacheCliTests(unittest.TestCase):
         self.assertEqual(receipt["sourceIndexSha256"], hashlib.sha256(expected_sources.encode()).hexdigest())
         self.assertEqual(len(receipt["members"]), 2)
         for member, dataset in zip(receipt["members"], bundle["datasets"]):
-            self.assertEqual(member["identity"], f'US-{dataset["asin"]}-stars-all_types-all-size-50')
+            self.assertEqual(member["identity"], f'US-{dataset["asin"]}-stars-all_types-all-size-20')
             self.assertEqual(member["request"], {
                 "marketplace": "US", "asin": dataset["asin"], "starList": [],
-                "typeList": [], "requestPageSize": 50,
+                "typeList": [], "requestPageSize": 20,
             })
             self.assertEqual(member["reviewCount"], 1)
             expected_dataset = json.dumps(dataset["reviews"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -395,15 +395,15 @@ class BatchReviewCacheCliTests(unittest.TestCase):
         self.assertEqual(first["displayOrder"], ["B000000002", "B000000001"])
         self.assertEqual(second["displayOrder"], ["B000000002", "B000000001"])
 
-    def test_new_batch_member_status_and_request_use_the_actual_fifty_record_page_size(self):
+    def test_new_batch_member_status_and_request_use_the_actual_twenty_record_page_size(self):
         batch = self.init_batch(["B000000001", "B000000002"], limit=100)
         status = self.run_batch("status", "--batch-id", batch["batchId"])
         request = self.run_batch("next-request", *self.member_args(batch, "B000000001"))
 
         self.assertEqual(batch["members"][0]["targetLimit"], 100)
         self.assertEqual(status["members"][0]["targetLimit"], 100)
-        self.assertEqual(status["members"][0]["requestPageSize"], 50)
-        self.assertEqual(request["request"]["size"], 50)
+        self.assertEqual(status["members"][0]["requestPageSize"], 20)
+        self.assertEqual(request["request"]["size"], 20)
 
     def test_different_target_limit_batch_fails_before_sharing_a_live_member_cache(self):
         first = self.init_batch(["B000000001", "B000000002"])
@@ -430,8 +430,8 @@ class BatchReviewCacheCliTests(unittest.TestCase):
         other_asin = "B000000002"
         self.seed_terminal_member(other_asin, target_limit=500, count=1, source_pages=1)
         for asin, limit, count, pages, expected_status in (
-            ("B000000001", 2000, 1500, 30, "complete"),
-            ("B000000003", 1000, 1000, 21, "capped"),
+            ("B000000001", 2000, 1500, 75, "complete"),
+            ("B000000003", 1000, 1000, 51, "capped"),
         ):
             with self.subTest(status=expected_status):
                 collection, records = self.seed_terminal_member(asin, target_limit=limit, count=count, source_pages=pages)
@@ -453,7 +453,7 @@ class BatchReviewCacheCliTests(unittest.TestCase):
                 self.assertEqual(self.collection_snapshot(collection), before)
 
     def test_larger_receipt_dataset_is_reused_for_a_smaller_batch_target(self):
-        collection, records = self.seed_terminal_member("B000000001", target_limit=2000, count=100, source_pages=2)
+        collection, records = self.seed_terminal_member("B000000001", target_limit=2000, count=100, source_pages=5)
         html = self.workspace / "larger-single.html"
         html.write_text(interactive_report_html(records), encoding="utf-8")
         finalized = self.run_single("finalize-html", "B000000001", "--html", str(html))
@@ -474,7 +474,7 @@ class BatchReviewCacheCliTests(unittest.TestCase):
         self.assertFalse(collection.exists())
 
     def test_capped_dataset_cannot_be_expanded_by_a_new_batch_target(self):
-        collection, _ = self.seed_terminal_member("B000000001", target_limit=50, count=50, source_pages=2)
+        collection, _ = self.seed_terminal_member("B000000001", target_limit=50, count=50, source_pages=4)
         before = self.collection_snapshot(collection)
 
         rejected = self.run_batch("init", "--marketplace", "US", "--asins", "B000000001", "B000000003", "--limit", "100", expected=2)
@@ -485,7 +485,7 @@ class BatchReviewCacheCliTests(unittest.TestCase):
         self.assertEqual(self.collection_snapshot(collection), before)
 
     def test_capped_receipt_cannot_be_expanded_by_a_new_batch_target(self):
-        _, records = self.seed_terminal_member("B000000001", target_limit=50, count=50, source_pages=2)
+        _, records = self.seed_terminal_member("B000000001", target_limit=50, count=50, source_pages=4)
         html = self.workspace / "capped-single.html"
         html.write_text(interactive_report_html(records), encoding="utf-8")
         finalized = self.run_single("finalize-html", "B000000001", "--html", str(html))
@@ -529,24 +529,24 @@ class BatchReviewCacheCliTests(unittest.TestCase):
                 self.workspace
                 / ".amazon-review-insights-cache"
                 / "collections"
-                / "US-B000000001-stars-all_types-all-size-50"
+                / "US-B000000001-stars-all_types-all-size-20"
             ).exists()
         )
 
-    def test_matching_legacy_size_twenty_member_resumes_at_twenty(self):
-        self.seed_size_twenty_member("B000000001")
+    def test_matching_legacy_size_fifty_member_resumes_at_fifty(self):
+        self.seed_size_fifty_member("B000000001")
         batch = self.init_batch(["B000000001", "B000000002"])
 
         status = self.run_batch("status", "--batch-id", batch["batchId"])
         request = self.run_batch("next-request", *self.member_args(batch, "B000000001"))
 
         self.assertEqual(status["members"][0]["targetLimit"], 2000)
-        self.assertEqual(status["members"][0]["requestPageSize"], 20)
-        self.assertEqual(request["request"]["size"], 20)
+        self.assertEqual(status["members"][0]["requestPageSize"], 50)
+        self.assertEqual(request["request"]["size"], 50)
         self.assertEqual(request["request"]["page"], 2)
 
-    def test_incompatible_target_refuses_legacy_size_twenty_member_before_authorization(self):
-        legacy = self.seed_size_twenty_member("B000000001")
+    def test_incompatible_target_refuses_legacy_size_fifty_member_before_authorization(self):
+        legacy = self.seed_size_fifty_member("B000000001")
 
         rejected = self.run_batch(
             "init",

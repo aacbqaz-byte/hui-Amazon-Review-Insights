@@ -263,8 +263,8 @@ class HtmlContractTests(unittest.TestCase):
         required_fragments = (
             "ask whether the user wants optional review filters",
             "2,000",
-            '"size": 50',
-            "existing schema-2 size-20 collection or receipt",
+            '"size": 20',
+            "existing schema-2 size-50 collection or receipt",
             "analyze every unique collected review",
             "Source-reported total",
         )

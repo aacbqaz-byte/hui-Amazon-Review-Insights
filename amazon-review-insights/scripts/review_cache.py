@@ -24,9 +24,11 @@ from validate_report import ReportValidationError, read_report, validate_report,
 
 
 SCHEMA_VERSION = 2
-DEFAULT_PAGE_SIZE = 50
-LEGACY_PAGE_SIZES = (20,)
+DEFAULT_PAGE_SIZE = 20
+LEGACY_PAGE_SIZES = (50,)
 DEFAULT_COLLECTION_LIMIT = 2000
+MIN_COLLECTION_LIMIT = 50
+COLLECTION_LIMIT_STEP = 50
 TERMINAL_STATES = {"complete", "capped", "partial", "blocked-empty"}
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -142,10 +144,11 @@ def safe_component(value: str, label: str) -> str:
 
 
 def validate_collection_limit(limit: int) -> int:
-    if not 50 <= limit <= DEFAULT_COLLECTION_LIMIT or limit % DEFAULT_PAGE_SIZE != 0:
+    if not MIN_COLLECTION_LIMIT <= limit <= DEFAULT_COLLECTION_LIMIT or limit % COLLECTION_LIMIT_STEP != 0:
         raise CacheError(
             "INVALID_LIMIT",
-            f"limit must be between 50 and {DEFAULT_COLLECTION_LIMIT} and divisible by {DEFAULT_PAGE_SIZE}",
+            f"limit must be between {MIN_COLLECTION_LIMIT} and {DEFAULT_COLLECTION_LIMIT} "
+            f"and divisible by {COLLECTION_LIMIT_STEP}",
         )
     return limit
 
